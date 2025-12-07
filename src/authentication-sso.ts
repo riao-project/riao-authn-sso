@@ -1,4 +1,4 @@
-import { Authentication, Principal } from '@riao/iam';
+import { Authentication, Principal, Encryptor, Decryptor } from '@riao/iam';
 import { QueryRepository, DatabaseRecordId } from '@riao/dbal';
 import { randomBytes } from 'crypto';
 import {
@@ -20,6 +20,8 @@ export abstract class SSOAuthentication<
 	protected readonly stateExpiryMinutes: number;
 	protected ssoTokenRepo: QueryRepository<SSOTokenRecord>;
 	protected ssoStateRepo: QueryRepository<SSOStateRecord>;
+	protected encryptor?: Encryptor;
+	protected decryptor?: Decryptor;
 
 	constructor(options: SSOAuthenticationOptions) {
 		super(options);
@@ -33,6 +35,13 @@ export abstract class SSOAuthentication<
 			table: 'iam_sso_state',
 			identifiedBy: 'state',
 		});
+		// Initialize encryption/decryption if keys provided
+		if (options.encryptionPublicKey) {
+			this.encryptor = new Encryptor(options.encryptionPublicKey);
+		}
+		if (options.encryptionPrivateKey) {
+			this.decryptor = new Decryptor(options.encryptionPrivateKey);
+		}
 	}
 
 	/**
@@ -126,6 +135,7 @@ export abstract class SSOAuthentication<
 
 	/**
 	 * Save or update SSO tokens in database
+	 * Encrypts tokens before storage if encryption is configured
 	 */
 	protected async saveTokens(
 		principalId: DatabaseRecordId,
@@ -145,8 +155,18 @@ export abstract class SSOAuthentication<
 		const record: Partial<SSOTokenRecord> = {
 			provider_id: providerId,
 			provider: this.provider,
-			access_token: tokenData.access_token,
-			refresh_token: tokenData.refresh_token,
+			access_token: this.encryptor
+				? this.encryptor
+					.encrypt(tokenData.access_token)
+					.toString('base64')
+				: tokenData.access_token,
+			refresh_token: tokenData.refresh_token
+				? this.encryptor
+					? this.encryptor
+						.encrypt(tokenData.refresh_token)
+						.toString('base64')
+					: tokenData.refresh_token
+				: undefined,
 			expires_at: expiresAt,
 			provider_metadata: JSON.stringify(userInfo),
 		};
@@ -171,6 +191,7 @@ export abstract class SSOAuthentication<
 
 	/**
 	 * Refresh access token using refresh token
+	 * Decrypts stored refresh token and re-encrypts new tokens
 	 */
 	public async refreshAccessToken(
 		principalId: DatabaseRecordId
@@ -186,14 +207,29 @@ export abstract class SSOAuthentication<
 			return null;
 		}
 
-		const newTokenData = await this.exchangeRefreshToken(
-			tokenRecord.refresh_token
-		);
+		// Decrypt refresh token if encryption is configured
+		const refreshToken = this.decryptor
+			? this.decryptor
+				.decrypt(Buffer.from(tokenRecord.refresh_token, 'base64'))
+				.toString('utf-8')
+			: tokenRecord.refresh_token;
+
+		const newTokenData = await this.exchangeRefreshToken(refreshToken);
 
 		await this.ssoTokenRepo.update({
 			set: {
-				access_token: newTokenData.access_token,
-				refresh_token: newTokenData.refresh_token,
+				access_token: this.encryptor
+					? this.encryptor
+						.encrypt(newTokenData.access_token)
+						.toString('base64')
+					: newTokenData.access_token,
+				refresh_token: newTokenData.refresh_token
+					? this.encryptor
+						? this.encryptor
+							.encrypt(newTokenData.refresh_token)
+							.toString('base64')
+						: newTokenData.refresh_token
+					: undefined,
 				expires_at: new Date(
 					Date.now() + newTokenData.expires_in * 1000
 				),
@@ -201,21 +237,49 @@ export abstract class SSOAuthentication<
 			where: { id: tokenRecord.id },
 		});
 
-		return newTokenData.access_token;
+		return this.encryptor
+			? this.encryptor
+				.encrypt(newTokenData.access_token)
+				.toString('base64')
+			: newTokenData.access_token;
 	}
 
 	/**
 	 * Get stored token for principal
+	 * Decrypts tokens if encryption is configured
 	 */
 	public async getStoredToken(
 		principalId: DatabaseRecordId
 	): Promise<SSOTokenRecord | null> {
-		return this.ssoTokenRepo.findOne({
+		const record = await this.ssoTokenRepo.findOne({
 			where: {
 				principal_id: principalId,
 				provider: this.provider,
 			},
 		});
+
+		if (!record) {
+			return null;
+		}
+
+		// Decrypt tokens if encryption is configured
+		if (this.decryptor) {
+			return {
+				...record,
+				access_token: this.decryptor
+					.decrypt(Buffer.from(record.access_token, 'base64'))
+					.toString('utf-8'),
+				refresh_token: record.refresh_token
+					? this.decryptor
+						.decrypt(
+							Buffer.from(record.refresh_token, 'base64')
+						)
+						.toString('utf-8')
+					: undefined,
+			};
+		}
+
+		return record;
 	}
 
 	/**

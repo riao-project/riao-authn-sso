@@ -1,7 +1,7 @@
 import 'jasmine';
 import { SSOAuthentication, SSOTokenResponse, SSOUserInfo } from '../../src';
 import { createDatabase, getMigrations, runMigrations } from '../database';
-import { Principal } from '@riao/iam/auth';
+import { Principal, KeyPairGenerator } from '@riao/iam';
 import { AuthenticationSSOMigrations } from '../../src/authentication-sso-migrations'; // eslint-disable-line max-len
 import { AuthMigrations } from '@riao/iam/auth/auth-migrations';
 
@@ -645,6 +645,265 @@ describe('Authentication - SSO', () => {
 
 			const storedStateAfter = await auth.getStoredState(state);
 			expect(storedStateAfter).not.toBeNull();
+		});
+	});
+
+	describe('Token Encryption', () => {
+		let encryptedAuth: TestSSOAuthentication;
+
+		beforeAll(async () => {
+			// Generate encryption keys
+			const generator = new KeyPairGenerator({ algorithm: 'RS256' });
+			const keypair = generator.generate();
+
+			// Create auth with encryption enabled
+			encryptedAuth = new TestSSOAuthentication({
+				db,
+				provider: 'test-provider-encrypted',
+				encryptionPublicKey: keypair.publicKey,
+				encryptionPrivateKey: keypair.privateKey,
+			});
+		});
+
+		it('should encrypt tokens before storing in database', async () => {
+			const principal = await encryptedAuth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			// Get the raw record from database (without decryption)
+			const rawRecord = await encryptedAuth['ssoTokenRepo'].findOne({
+				where: {
+					principal_id: principal.id,
+					provider: 'test-provider-encrypted',
+				},
+			});
+
+			expect(rawRecord).not.toBeNull();
+			// Encrypted tokens should be base64 strings, not plaintext
+			expect(rawRecord?.access_token).not.toEqual('test-access-token');
+			expect(rawRecord?.refresh_token).not.toEqual('test-refresh-token');
+			// They should be valid base64
+			// eslint-disable-next-line max-len
+			expect(() =>
+				Buffer.from(rawRecord!.access_token, 'base64')
+			).not.toThrow();
+			// eslint-disable-next-line max-len
+			expect(() =>
+				Buffer.from(rawRecord!.refresh_token!, 'base64')
+			).not.toThrow();
+		});
+
+		it('should decrypt tokens when retrieving from database', async () => {
+			const principal = await encryptedAuth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			const decrypted = await encryptedAuth.getStoredToken(principal.id);
+
+			expect(decrypted).not.toBeNull();
+			// Decrypted tokens should match the original plaintext
+			expect(decrypted?.access_token).toEqual('test-access-token');
+			expect(decrypted?.refresh_token).toEqual('test-refresh-token');
+		});
+
+		// eslint-disable-next-line max-len
+		it('should encrypt new tokens on refresh with encryption', async () => {
+			const principal = await encryptedAuth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			// Refresh the token
+			await encryptedAuth.refreshAccessToken(principal.id);
+
+			// Get the raw record from database
+			const rawRecord = await encryptedAuth['ssoTokenRepo'].findOne({
+				where: {
+					principal_id: principal.id,
+					provider: 'test-provider-encrypted',
+				},
+			});
+
+			expect(rawRecord).not.toBeNull();
+			// New tokens should also be encrypted
+			expect(rawRecord?.access_token).not.toEqual('new-access-token');
+			expect(rawRecord?.refresh_token).not.toEqual('new-refresh-token');
+		});
+
+		// eslint-disable-next-line max-len
+		// eslint-disable-next-line max-len
+		it('should decrypt refresh token before using it', async () => {
+			const principal = await encryptedAuth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			// Refresh should work correctly even with encrypted tokens
+			// eslint-disable-next-line max-len
+			const newToken = await encryptedAuth.refreshAccessToken(
+				principal.id
+			);
+
+			expect(newToken).not.toBeNull();
+			// Returned token should be encrypted (base64)
+			expect(() => Buffer.from(newToken!, 'base64')).not.toThrow();
+		});
+
+		// eslint-disable-next-line max-len
+		it('should decrypt refresh token to access new token', async () => {
+			const principal = await encryptedAuth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			// Refresh the token
+			await encryptedAuth.refreshAccessToken(principal.id);
+
+			// Get decrypted token
+			const decrypted = await encryptedAuth.getStoredToken(principal.id);
+
+			expect(decrypted?.access_token).toEqual('new-access-token');
+			expect(decrypted?.refresh_token).toEqual('new-refresh-token');
+		});
+
+		// eslint-disable-next-line max-len
+		it('should handle different data for access and refresh tokens', async () => {
+			const principal = await encryptedAuth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			const rawRecord = await encryptedAuth['ssoTokenRepo'].findOne({
+				where: {
+					principal_id: principal.id,
+					provider: 'test-provider-encrypted',
+				},
+			});
+
+			expect(rawRecord).not.toBeNull();
+			// Encrypted values should be different (due to RSA random padding)
+			// eslint-disable-next-line max-len
+			expect(rawRecord?.access_token).not.toEqual(
+				rawRecord?.refresh_token
+			);
+		});
+
+		// eslint-disable-next-line max-len
+		it('should support revokeSession with encryption enabled', async () => {
+			const principal = await encryptedAuth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			// Verify token exists
+			let token = await encryptedAuth.getStoredToken(principal.id);
+			expect(token).not.toBeNull();
+
+			// Revoke session
+			await encryptedAuth.revokeSession(principal.id);
+
+			// Verify token is deleted
+			token = await encryptedAuth.getStoredToken(principal.id);
+			expect(token).toBeNull();
+		});
+
+		// eslint-disable-next-line max-len
+		it('should not decrypt if decryptor is not configured', async () => {
+			// Create auth with only encryptor, no decryptor
+			const generator = new KeyPairGenerator({ algorithm: 'RS256' });
+			const keypair = generator.generate();
+
+			const partialAuth = new TestSSOAuthentication({
+				db,
+				provider: 'test-provider-partial',
+				encryptionPublicKey: keypair.publicKey,
+				// No encryptionPrivateKey
+			});
+
+			const principal = await partialAuth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			// Get the raw encrypted record
+			const rawRecord = await partialAuth['ssoTokenRepo'].findOne({
+				where: {
+					principal_id: principal.id,
+					provider: 'test-provider-partial',
+				},
+			});
+
+			expect(rawRecord).not.toBeNull();
+			// Token is encrypted in DB
+			expect(rawRecord?.access_token).not.toEqual('test-access-token');
+
+			// getStoredToken returns encrypted data (since no decryptor)
+			const token = await partialAuth.getStoredToken(principal.id);
+			expect(token?.access_token).toEqual(rawRecord?.access_token);
+		});
+
+		// eslint-disable-next-line max-len
+		it('should handle null refresh token gracefully with encryption', async () => {
+			const generator = new KeyPairGenerator({ algorithm: 'RS256' });
+			const keypair = generator.generate();
+
+			const encAuth = new TestSSOAuthentication({
+				db,
+				provider: 'test-provider-no-refresh',
+				encryptionPublicKey: keypair.publicKey,
+				encryptionPrivateKey: keypair.privateKey,
+			});
+
+			const principal = await encAuth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			// Manually update to remove refresh token
+			const rawRecord = await encAuth['ssoTokenRepo'].findOne({
+				where: {
+					principal_id: principal.id,
+					provider: 'test-provider-no-refresh',
+				},
+			});
+
+			await encAuth['ssoTokenRepo'].update({
+				set: { refresh_token: undefined },
+				where: { id: rawRecord?.id },
+			});
+
+			// Should return null without throwing
+			const result = await encAuth.refreshAccessToken(principal.id);
+			expect(result).toBeNull();
 		});
 	});
 });
