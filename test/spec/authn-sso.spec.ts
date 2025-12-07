@@ -496,4 +496,155 @@ describe('Authentication - SSO', () => {
 				expect(token2?.provider_id).toEqual('provider-user-2');
 			});
 	});
+
+	describe('CSRF protection - state validation', () => {
+		// eslint-disable-next-line max-len
+		it('should generate unique state for each authorization request', async () => {
+			const state1 = await auth.generateState();
+			const state2 = await auth.generateState();
+
+			expect(state1).toBeDefined();
+			expect(state2).toBeDefined();
+			expect(state1.length).toBeGreaterThan(16);
+			expect(state2.length).toBeGreaterThan(16);
+			expect(state1).not.toEqual(state2);
+		});
+
+		// eslint-disable-next-line max-len
+		it('should store state with correct expiration time', async () => {
+			const state = await auth.generateState();
+			const storedState = await auth.getStoredState(state);
+
+			expect(storedState).not.toBeNull();
+			expect(storedState?.state).toEqual(state);
+			expect(storedState?.provider).toEqual('test-provider');
+			expect(storedState?.expires_at).toBeDefined();
+
+			const expirationTime = storedState?.expires_at.getTime() || 0;
+			const now = Date.now();
+			const timeDifference = expirationTime - now;
+
+			// Should be approximately 10 minutes (600000 ms) in future
+			expect(timeDifference).toBeGreaterThan(595000);
+			expect(timeDifference).toBeLessThan(605000);
+		});
+
+		it('should validate matching state parameter', async () => {
+			const state = await auth.generateState();
+
+			const isValid = await auth.validateState(state);
+
+			expect(isValid).toBe(true);
+		});
+
+		it('should reject mismatched state', async () => {
+			let error: Error | undefined;
+
+			try {
+				await auth.validateState('invalid-state-value');
+			}
+			catch (err) {
+				error = err as Error;
+			}
+
+			expect(error).toBeDefined();
+			expect(error?.message).toContain('State validation failed');
+		});
+
+		// eslint-disable-next-line max-len
+		it('should reject reused/consumed state parameters', async () => {
+			const state = await auth.generateState();
+
+			// First use - should succeed
+			await auth.validateState(state);
+
+			// Second use - should fail (state consumed)
+			let error: Error | undefined;
+
+			try {
+				await auth.validateState(state);
+			}
+			catch (err) {
+				error = err as Error;
+			}
+
+			expect(error).toBeDefined();
+			expect(error?.message).toContain('State has been consumed');
+		});
+
+		// eslint-disable-next-line max-len
+		it('should authenticate with valid state parameter', async () => {
+			const state = await auth.generateState();
+			const principal = await auth.authenticate({
+				code: 'valid-code',
+				state,
+			});
+
+			expect(principal).not.toBeNull();
+			expect(principal?.login).toEqual('testuser@example.com');
+		});
+
+		// eslint-disable-next-line max-len
+		it('should reject authentication with mismatched state', async () => {
+			let error: Error | undefined;
+
+			try {
+				await auth.authenticate({
+					code: 'valid-code',
+					state: 'wrong-state',
+				});
+			}
+			catch (err) {
+				error = err as Error;
+			}
+
+			expect(error).toBeDefined();
+			expect(error?.message).toContain('State validation failed');
+		});
+
+		// eslint-disable-next-line max-len
+		it('should allow authentication without state (backward compatibility)', async () => {
+			const principal = await auth.authenticate({
+				code: 'valid-code',
+			});
+
+			expect(principal).not.toBeNull();
+			expect(principal?.login).toEqual('testuser@example.com');
+		});
+
+		// eslint-disable-next-line max-len
+		it('should generate authorization URL with embedded state', async () => {
+			const result = await auth.generateAuthorizationUrl();
+
+			expect(result.url).toBeDefined();
+			expect(result.state).toBeDefined();
+			expect(result.url).toContain(result.state);
+			expect(result.url).toContain(
+				'https://provider.example.com/authorize'
+			);
+		});
+
+		// eslint-disable-next-line max-len
+		it('should generate unique URLs for each authorization request', async () => {
+			const result1 = await auth.generateAuthorizationUrl();
+			const result2 = await auth.generateAuthorizationUrl();
+
+			expect(result1.url).not.toEqual(result2.url);
+			expect(result1.state).not.toEqual(result2.state);
+		});
+
+		// eslint-disable-next-line max-len
+		it('should cleanup expired state records', async () => {
+			const state = await auth.generateState();
+			const storedStateBefore = await auth.getStoredState(state);
+
+			expect(storedStateBefore).not.toBeNull();
+
+			// Cleanup should not delete non-expired states
+			await auth.cleanupExpiredStates();
+
+			const storedStateAfter = await auth.getStoredState(state);
+			expect(storedStateAfter).not.toBeNull();
+		});
+	});
 });

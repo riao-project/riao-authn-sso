@@ -7,6 +7,20 @@ import { AuthOptions } from '@riao/iam/auth/auth';
 export interface SSOAuthenticationOptions extends AuthOptions {
 	db: Database;
 	provider: string;
+	// eslint-disable-next-line max-len
+	stateExpiryMinutes?: number; // Expiry time for state parameter (default: 10)
+}
+
+/**
+ * State record stored for CSRF protection
+ */
+export interface SSOStateRecord {
+	state: string;
+	provider: string;
+	principal_id?: DatabaseRecordId;
+	created_at: Date;
+	expires_at: Date;
+	used_at?: Date;
 }
 
 /**
@@ -33,7 +47,8 @@ export interface SSOUserInfo {
 	login: string;
 	name: string;
 	type: string;
-	[key: string]: string | undefined; // For provider-specific claims
+	// For provider-specific claims
+	[key: string]: string | undefined;
 }
 
 /**
@@ -44,5 +59,6 @@ export interface SSOTokenResponse {
 	refresh_token?: string;
 	expires_in: number;
 	token_type?: string;
-	[key: string]: string | number | undefined; // For provider-specific response data
+	// For provider-specific response data
+	[key: string]: string | number | undefined;
 }

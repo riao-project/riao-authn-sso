@@ -1,10 +1,12 @@
 import { Authentication, Principal } from '@riao/iam';
 import { QueryRepository, DatabaseRecordId } from '@riao/dbal';
+import { randomBytes } from 'crypto';
 import {
 	SSOTokenRecord,
 	SSOUserInfo,
 	SSOTokenResponse,
 	SSOAuthenticationOptions,
+	SSOStateRecord,
 } from './sso-config';
 
 /**
@@ -15,14 +17,21 @@ export abstract class SSOAuthentication<
 	TPrincipal extends Principal,
 > extends Authentication<TPrincipal> {
 	protected readonly provider: string;
+	protected readonly stateExpiryMinutes: number;
 	protected ssoTokenRepo: QueryRepository<SSOTokenRecord>;
+	protected ssoStateRepo: QueryRepository<SSOStateRecord>;
 
 	constructor(options: SSOAuthenticationOptions) {
 		super(options);
 		this.provider = options.provider;
+		this.stateExpiryMinutes = options.stateExpiryMinutes || 10;
 		this.ssoTokenRepo = options.db.getQueryRepository<SSOTokenRecord>({
 			table: 'iam_sso_tokens',
 			identifiedBy: 'id',
+		});
+		this.ssoStateRepo = options.db.getQueryRepository<SSOStateRecord>({
+			table: 'iam_sso_state',
+			identifiedBy: 'state',
 		});
 	}
 
@@ -63,11 +72,17 @@ export abstract class SSOAuthentication<
 	/**
 	 * Generic authenticate implementation
 	 * Orchestrates: code exchange → user info → principal → tokens
+	 * Validates state parameter for CSRF protection if provided
 	 */
 	public override async authenticate(credentials: {
 		code: string;
 		state?: string;
 	}): Promise<TPrincipal | null> {
+		// Validate state if provided for CSRF protection
+		if (credentials.state) {
+			await this.validateState(credentials.state);
+		}
+
 		// Exchange code for tokens
 		const tokenData = await this.exchangeAuthorizationCode(
 			credentials.code
@@ -213,5 +228,119 @@ export abstract class SSOAuthentication<
 				provider: this.provider,
 			},
 		});
+	}
+
+	/**
+	 * Generate a cryptographically random state parameter for CSRF protection
+	 */
+	public async generateState(): Promise<string> {
+		const state = randomBytes(32).toString('hex');
+		const now = new Date();
+		// eslint-disable-next-line max-len
+		const expiresAt = new Date(
+			now.getTime() + this.stateExpiryMinutes * 60000
+		);
+
+		await this.ssoStateRepo.insert({
+			records: [
+				{
+					state,
+					provider: this.provider,
+					created_at: now,
+					expires_at: expiresAt,
+				} as SSOStateRecord,
+			],
+		});
+
+		return state;
+	}
+
+	/**
+	 * Validate and consume state parameter for CSRF protection
+	 */
+	public async validateState(state: string): Promise<boolean> {
+		const record = await this.ssoStateRepo.findOne({
+			where: {
+				state,
+				provider: this.provider,
+			},
+		});
+
+		if (!record) {
+			throw new Error('State validation failed or state not found');
+		}
+
+		const now = new Date();
+		if (record.expires_at < now) {
+			throw new Error('State has expired');
+		}
+
+		if (record.used_at) {
+			throw new Error('State has been consumed');
+		}
+
+		// Mark state as used
+		await this.ssoStateRepo.update({
+			set: { used_at: now },
+			where: { state },
+		});
+
+		return true;
+	}
+
+	/**
+	 * Get stored state info
+	 */
+	public async getStoredState(state: string): Promise<SSOStateRecord | null> {
+		return this.ssoStateRepo.findOne({
+			where: {
+				state,
+				provider: this.provider,
+			},
+		});
+	}
+
+	/**
+	 * Clean up expired state records
+	 */
+	public async cleanupExpiredStates(): Promise<void> {
+		// Note: This is a simplified cleanup. For production use,
+		// consider implementing a more efficient bulk delete with
+		// raw SQL or ORM-specific expiration query syntax
+		const expiredStates = await this.ssoStateRepo.find({
+			where: {
+				provider: this.provider,
+			},
+		});
+
+		const now = new Date();
+		const statesToDelete = expiredStates
+			.filter((state) => state.expires_at < now)
+			.map((state) => state.state);
+
+		if (statesToDelete.length > 0) {
+			await Promise.all(
+				statesToDelete.map(async (state) =>
+					this.ssoStateRepo.delete({
+						where: {
+							state,
+							provider: this.provider,
+						},
+					})
+				)
+			);
+		}
+	}
+
+	/**
+	 * Generate authorization URL with state parameter
+	 */
+	public async generateAuthorizationUrl(): Promise<{
+		url: string;
+		state: string;
+	}> {
+		const state = await this.generateState();
+		const url = this.getAuthorizationUrl(state);
+		return { url, state };
 	}
 }
