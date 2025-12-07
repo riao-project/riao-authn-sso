@@ -44,5 +44,5 @@ export interface SSOTokenResponse {
 	refresh_token?: string;
 	expires_in: number;
 	token_type?: string;
-	[key: string]: string | number | undefined; // For provider-specific
+	[key: string]: string | number | undefined; // For provider-specific response data
 }
