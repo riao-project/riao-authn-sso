@@ -1,5 +1,5 @@
 {
-	"name": "authn-sso",
+	"name": "@riao/authn-sso",
 	"version": "1.0.0",
 	"description": "authn-sso",
 	"private": "true",
