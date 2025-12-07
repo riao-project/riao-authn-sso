@@ -1,7 +1,7 @@
 {
 	"name": "@riao/authn-sso",
 	"version": "1.0.0",
-	"description": "authn-sso",
+	"description": "Riao SSO",
 	"private": "true",
 	"typescript-template": {
 		"base": "1.0.1",
@@ -47,13 +47,25 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/authn-sso/authn-sso.git"
+		"url": "git+https://github.com/riao-project/authn-sso.git"
 	},
 	"author": "authn-sso",
 	"license": "MIT",
 	"bugs": {
-		"url": "https://github.com/authn-sso/authn-sso/issues"
+		"url": "https://github.com/riao-project/authn-sso/issues"
 	},
-	"homepage": "https://github.com/authn-sso/authn-sso#readme",
-	"keywords": []
+	"homepage": "https://github.com/riao-project/authn-sso#readme",
+	"keywords": [
+		"riao",
+		"sso",
+		"authn",
+		"authentication",
+		"authorization",
+		"iam",
+		"identity",
+		"access-control",
+		"single-sign-on",
+		"oauth2",
+		"openid-connect"
+	]
 }
