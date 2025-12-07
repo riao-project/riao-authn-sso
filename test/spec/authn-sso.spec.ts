@@ -1,0 +1,499 @@
+import 'jasmine';
+import { SSOAuthentication, SSOTokenResponse, SSOUserInfo } from '../../src';
+import { createDatabase, getMigrations, runMigrations } from '../database';
+import { Principal } from '@riao/iam/auth';
+import { AuthenticationSSOMigrations } from '../../src/authentication-sso-migrations'; // eslint-disable-line max-len
+import { AuthMigrations } from '@riao/iam/auth/auth-migrations';
+
+interface SSOPrincipal extends Principal {
+	name: string;
+}
+
+/**
+ * Test implementation of SSOAuthentication for testing purposes
+ */
+class TestSSOAuthentication extends SSOAuthentication<SSOPrincipal> {
+	getAuthorizationUrl(state: string): string {
+		return `https://provider.example.com/authorize?state=${state}`;
+	}
+
+	protected getAuthorizationParams(state: string): Record<string, string> {
+		return {
+			client_id: 'test-client-id',
+			redirect_uri: 'http://localhost:3000/callback',
+			scope: 'openid profile email',
+			state,
+		};
+	}
+
+	async exchangeAuthorizationCode(code: string): Promise<SSOTokenResponse> {
+		// Mock implementation
+		if (code === 'valid-code') {
+			return {
+				access_token: 'test-access-token',
+				refresh_token: 'test-refresh-token',
+				expires_in: 3600,
+				token_type: 'Bearer',
+			};
+		}
+		throw new Error('Invalid authorization code');
+	}
+
+	protected async getUserInfo(accessToken: string): Promise<SSOUserInfo> {
+		// Mock implementation
+		if (accessToken === 'test-access-token') {
+			return {
+				id: 'provider-user-123',
+				login: 'testuser@example.com',
+				name: 'Test User',
+				type: 'user',
+			};
+		}
+		throw new Error('Invalid access token');
+	}
+
+	protected async exchangeRefreshToken(
+		refreshToken: string
+	): Promise<SSOTokenResponse> {
+		// Mock implementation
+		if (refreshToken === 'test-refresh-token') {
+			return {
+				access_token: 'new-access-token',
+				refresh_token: 'new-refresh-token',
+				expires_in: 3600,
+				token_type: 'Bearer',
+			};
+		}
+		throw new Error('Invalid refresh token');
+	}
+}
+
+describe('Authentication - SSO', () => {
+	const db = createDatabase('authentication-sso');
+
+	const auth = new TestSSOAuthentication({
+		db,
+		provider: 'test-provider',
+	});
+
+	beforeAll(async () => {
+		await db.init();
+		// Run parent migrations first
+		await runMigrations(db, new AuthMigrations());
+		// Run driver-specific migrations
+		const migrationPack = new AuthenticationSSOMigrations();
+		await getMigrations(db, migrationPack);
+		await runMigrations(db, migrationPack);
+	});
+
+	afterAll(async () => {
+		await db.disconnect();
+	});
+
+	describe('authenticate', () => {
+		// eslint-disable-next-line max-len
+		it('should create a new principal on first SSO authentication', async () => {
+			const principal = await auth.authenticate({
+				code: 'valid-code',
+			});
+
+			expect(principal).not.toBeNull();
+			expect(principal?.login).toEqual('testuser@example.com');
+			expect(principal?.name).toEqual('Test User');
+			expect(principal?.type).toEqual('user');
+		});
+
+		// eslint-disable-next-line max-len
+		it('should return existing principal on subsequent authentication', async () => {
+			// First authentication - creates principal
+			const firstAuth = await auth.authenticate({
+				code: 'valid-code',
+			});
+
+			expect(firstAuth).not.toBeNull();
+			const firstId = firstAuth?.id;
+
+			// Second authentication with same code
+			const secondAuth = await auth.authenticate({
+				code: 'valid-code',
+			});
+
+			expect(secondAuth).not.toBeNull();
+			expect(secondAuth?.id).toEqual(firstId);
+		});
+
+		it('should fail with invalid authorization code', async () => {
+			let error: Error | undefined;
+
+			try {
+				await auth.authenticate({
+					code: 'invalid-code',
+				});
+			}
+			catch (err) {
+				error = err as Error;
+			}
+
+			expect(error).toBeDefined();
+			expect(error?.message).toContain('Invalid authorization code');
+		});
+
+		// eslint-disable-next-line max-len
+		it('should save SSO tokens after successful authentication', async () => {
+			const principal = await auth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			const token = await auth.getStoredToken(principal.id);
+
+			expect(token).not.toBeNull();
+			expect(token?.access_token).toEqual('test-access-token');
+			expect(token?.refresh_token).toEqual('test-refresh-token');
+			expect(token?.provider).toEqual('test-provider');
+			expect(token?.provider_id).toEqual('provider-user-123');
+		});
+
+		// eslint-disable-next-line max-len
+		it('should update existing SSO token on re-authentication', async () => {
+			const principal = await auth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			const firstToken = await auth.getStoredToken(principal.id);
+			const firstTokenId = firstToken?.id;
+
+			// Re-authenticate
+			await auth.authenticate({
+				code: 'valid-code',
+			});
+
+			const secondToken = await auth.getStoredToken(principal.id);
+
+			expect(secondToken?.id).toEqual(firstTokenId);
+			expect(secondToken?.access_token).toEqual('test-access-token');
+		});
+	});
+
+	describe('refreshAccessToken', () => {
+		it('should refresh access token using refresh token', async () => {
+			const principal = await auth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			const newAccessToken = await auth.refreshAccessToken(principal.id);
+
+			expect(newAccessToken).toEqual('new-access-token');
+		});
+
+		// eslint-disable-next-line max-len
+		it('should update stored token with new values after refresh', async () => {
+			const principal = await auth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			await auth.refreshAccessToken(principal.id);
+
+			const token = await auth.getStoredToken(principal.id);
+
+			expect(token?.access_token).toEqual('new-access-token');
+			expect(token?.refresh_token).toEqual('new-refresh-token');
+		});
+
+		it('should return null if refresh token does not exist', async () => {
+			const principal = await auth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			// Create a principal without tokens
+			const newPrincipalId = await auth.createPrincipal({
+				login: 'no-tokens@example.com',
+				name: 'No Tokens User',
+				type: 'user',
+			});
+
+			const result = await auth.refreshAccessToken(newPrincipalId);
+
+			expect(result).toBeNull();
+		});
+	});
+
+	describe('getStoredToken', () => {
+		it('should retrieve stored SSO token by principal ID', async () => {
+			const principal = await auth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			const token = await auth.getStoredToken(principal.id);
+
+			expect(token).not.toBeNull();
+			expect(token?.principal_id).toEqual(principal.id);
+			expect(token?.provider).toEqual('test-provider');
+		});
+
+		it('should return null for principal without SSO tokens', async () => {
+			const principalId = await auth.createPrincipal({
+				login: 'no-sso-tokens@example.com',
+				name: 'No SSO User',
+				type: 'user',
+			});
+
+			const token = await auth.getStoredToken(principalId);
+
+			expect(token).toBeNull();
+		});
+	});
+
+	describe('revokeSession', () => {
+		it('should delete SSO tokens for a principal', async () => {
+			const principal = await auth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			// Verify token exists
+			let token = await auth.getStoredToken(principal.id);
+			expect(token).not.toBeNull();
+
+			// Revoke session
+			await auth.revokeSession(principal.id);
+
+			// Verify token is deleted
+			token = await auth.getStoredToken(principal.id);
+			expect(token).toBeNull();
+		});
+
+		// eslint-disable-next-line max-len
+		it('should allow re-authentication after session revocation', async () => {
+			const principal = await auth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			// Revoke session
+			await auth.revokeSession(principal.id);
+
+			// Re-authenticate
+			const reAuthPrincipal = await auth.authenticate({
+				code: 'valid-code',
+			});
+
+			expect(reAuthPrincipal).not.toBeNull();
+			expect(reAuthPrincipal?.id).toEqual(principal.id);
+
+			// Verify new token was created
+			const newToken = await auth.getStoredToken(principal.id);
+			expect(newToken).not.toBeNull();
+		});
+	});
+
+	describe('getAuthorizationUrl', () => {
+		it('should generate valid authorization URL', () => {
+			const url = auth.getAuthorizationUrl('test-state-123');
+
+			expect(url).toContain('https://provider.example.com/authorize');
+			expect(url).toContain('state=test-state-123');
+		});
+
+		it('should include unique state in authorization URL', () => {
+			const state1 = 'unique-state-1';
+			const state2 = 'unique-state-2';
+
+			const url1 = auth.getAuthorizationUrl(state1);
+			const url2 = auth.getAuthorizationUrl(state2);
+
+			expect(url1).toContain(state1);
+			expect(url2).toContain(state2);
+			expect(url1).not.toEqual(url2);
+		});
+	});
+
+	describe('token expiration', () => {
+		// eslint-disable-next-line max-len
+		it('should set token expiration based on expires_in value', async () => {
+			const principal = await auth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			const token = await auth.getStoredToken(principal.id);
+
+			expect(token?.expires_at).toBeDefined();
+			const expirationTime = token?.expires_at?.getTime() || 0;
+			const now = Date.now();
+			const timeDifference = expirationTime - now;
+
+			// Should be approx 3600 seconds (1 hour) in future
+			// Allow 5 second margin for test execution time
+			expect(timeDifference).toBeGreaterThan(3595000);
+			expect(timeDifference).toBeLessThan(3605000);
+		});
+
+		it('should update expiration time on token refresh', async () => {
+			const principal = await auth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			const firstToken = await auth.getStoredToken(principal.id);
+			const firstExpiration = firstToken?.expires_at?.getTime() || 0;
+
+			// Wait a moment then refresh
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			await auth.refreshAccessToken(principal.id);
+
+			const secondToken = await auth.getStoredToken(principal.id);
+			const secondExpiration = secondToken?.expires_at?.getTime() || 0;
+
+			expect(secondExpiration).toBeGreaterThan(firstExpiration);
+		});
+	});
+
+	describe('provider metadata', () => {
+		// eslint-disable-next-line max-len
+		it('should store provider-specific user information in metadata', async () => {
+			const principal = await auth.authenticate({
+				code: 'valid-code',
+			});
+
+			if (!principal) {
+				throw new Error('Authentication failed');
+			}
+
+			const token = await auth.getStoredToken(principal.id);
+
+			expect(token?.provider_metadata).toBeDefined();
+			const metadata = JSON.parse(token?.provider_metadata || '{}');
+
+			expect(metadata.id).toEqual('provider-user-123');
+			expect(metadata.login).toEqual('testuser@example.com');
+			expect(metadata.name).toEqual('Test User');
+		});
+	});
+
+	describe('multiple principals', () => {
+		// eslint-disable-next-line max-len
+		it(// eslint-disable-next-line max-len
+			'should handle authentication for different principals independently', async () => {
+				class MultiProviderSSO extends SSOAuthentication<SSOPrincipal> {
+					private userIdCounter = 1;
+
+					getAuthorizationUrl(state: string): string {
+					// eslint-disable-next-line max-len
+						return `https://provider.example.com/authorize?state=${state}`;
+					}
+
+					protected getAuthorizationParams(
+						state: string
+					): Record<string, string> {
+						return {
+							client_id: 'test-client-id',
+							redirect_uri: 'http://localhost:3000/callback',
+							scope: 'openid profile email',
+							state,
+						};
+					}
+
+					async exchangeAuthorizationCode(
+						code: string
+					): Promise<SSOTokenResponse> {
+						if (code.startsWith('valid-')) {
+							const userId = this.userIdCounter++;
+							return {
+								access_token: `access-${userId}`,
+								refresh_token: `refresh-${userId}`,
+								expires_in: 3600,
+								token_type: 'Bearer',
+							};
+						}
+						throw new Error('Invalid code');
+					}
+
+					protected async getUserInfo(
+						accessToken: string
+					): Promise<SSOUserInfo> {
+						const userId = accessToken.split('-')[1];
+						return {
+							id: `provider-user-${userId}`,
+							login: `user${userId}@example.com`,
+							name: `User ${userId}`,
+							type: 'user',
+						};
+					}
+
+					protected async exchangeRefreshToken(
+						refreshToken: string
+					): Promise<SSOTokenResponse> {
+						const userId = refreshToken.split('-')[1];
+						return {
+							access_token: `new-access-${userId}`,
+							refresh_token: `new-refresh-${userId}`,
+							expires_in: 3600,
+							token_type: 'Bearer',
+						};
+					}
+				}
+
+				const multiAuth = new MultiProviderSSO({
+					db,
+					provider: 'test-provider',
+				});
+
+				const principal1 = await multiAuth.authenticate({
+					code: 'valid-code-1',
+				});
+				const principal2 = await multiAuth.authenticate({
+					code: 'valid-code-2',
+				});
+
+				expect(principal1).not.toBeNull();
+				expect(principal2).not.toBeNull();
+				expect(principal1?.id).not.toEqual(principal2?.id);
+				expect(principal1?.login).toEqual('user1@example.com');
+				expect(principal2?.login).toEqual('user2@example.com');
+
+				// eslint-disable-next-line max-len
+				const token1 = await multiAuth.getStoredToken(principal1?.id || '');
+				// eslint-disable-next-line max-len
+				const token2 = await multiAuth.getStoredToken(principal2?.id || '');
+
+				expect(token1?.provider_id).toEqual('provider-user-1');
+				expect(token2?.provider_id).toEqual('provider-user-2');
+			});
+	});
+});
