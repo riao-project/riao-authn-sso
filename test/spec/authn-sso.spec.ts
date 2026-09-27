@@ -1,7 +1,8 @@
 import 'jasmine';
 import { SSOAuthentication, SSOTokenResponse, SSOUserInfo } from '../../src';
 import { createDatabase, getMigrations, runMigrations } from '../database';
-import { Principal, KeyPairGenerator } from '@riao/iam';
+import { Principal } from '@riao/iam';
+import { KeyPairGenerator } from '@riao/crypto';
 import { AuthenticationSSOMigrations } from '../../src/authentication-sso-migrations'; // eslint-disable-line max-len
 import { AuthMigrations } from '@riao/iam/auth/auth-migrations';
 

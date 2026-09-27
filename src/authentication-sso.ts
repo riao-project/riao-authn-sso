@@ -1,4 +1,5 @@
-import { Authentication, Principal, Encryptor, Decryptor } from '@riao/iam';
+import { Authentication, Principal } from '@riao/iam';
+import { Encryptor, Decryptor } from '@riao/crypto';
 import { QueryRepository, DatabaseRecordId } from '@riao/dbal';
 import { randomBytes } from 'crypto';
 import {
