@@ -19,6 +19,7 @@ export abstract class SSOAuthentication<
 > extends Authentication<TPrincipal> {
 	protected readonly provider: string;
 	protected readonly stateExpiryMinutes: number;
+	protected readonly requestTimeoutMs: number;
 	protected ssoTokenRepo: QueryRepository<SSOTokenRecord>;
 	protected ssoStateRepo: QueryRepository<SSOStateRecord>;
 	protected encryptor?: Encryptor;
@@ -28,6 +29,13 @@ export abstract class SSOAuthentication<
 		super(options);
 		this.provider = options.provider;
 		this.stateExpiryMinutes = options.stateExpiryMinutes || 10;
+		this.requestTimeoutMs = options.requestTimeoutMs ?? 10000;
+		if (
+			!Number.isFinite(this.requestTimeoutMs) ||
+			this.requestTimeoutMs <= 0
+		) {
+			throw new Error('SSO provider request timeout must be positive');
+		}
 		this.ssoTokenRepo = options.db.getQueryRepository<SSOTokenRecord>({
 			table: 'iam_sso_tokens',
 			identifiedBy: 'id',
