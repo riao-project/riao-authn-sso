@@ -8,6 +8,7 @@ import {
 
 describe('SSO provider response helpers', () => {
 	it('adds a timeout signal to provider requests', async () => {
+		const timeoutSpy = spyOn(AbortSignal, 'timeout').and.callThrough();
 		const fetchSpy = spyOn(global, 'fetch').and.resolveTo(
 			new Response(JSON.stringify({ access_token: 'token' }), {
 				status: 200,
@@ -24,6 +25,7 @@ describe('SSO provider response helpers', () => {
 
 		const request = fetchSpy.calls.mostRecent().args[1];
 		expect(request?.signal).toBeDefined();
+		expect(timeoutSpy).toHaveBeenCalledWith(250);
 	});
 
 	it('does not expose provider response bodies in errors', async () => {
