@@ -1,6 +1,7 @@
 import {
 	ProviderAuthenticationRejectedError,
 	requestProviderJson,
+	throwProviderResponseError,
 	validateProviderUser,
 	validateTokenResponse,
 } from '../../src/provider-response';
@@ -98,4 +99,24 @@ describe('SSO provider response helpers', () => {
 		expect(() => validateProviderUser({ id: 12 }, []))
 			.toThrowError('Malformed provider user response');
 	});
+
+	it(
+		'exposes response classification for baseline-compatible consumers',
+		async () => {
+			await expectAsync(throwProviderResponseError(
+				'User info',
+				new Response('secret-token', { status: 401 }),
+				true
+			)).toBeRejectedWith(
+				jasmine.any(ProviderAuthenticationRejectedError)
+			);
+			await expectAsync(throwProviderResponseError(
+				'Token exchange',
+				new Response(JSON.stringify({
+					error: 'invalid_client',
+					error_description: 'secret-token',
+				}), { status: 400 })
+			)).toBeRejectedWithError('Token exchange failed: 400');
+		}
+	);
 });

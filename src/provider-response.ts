@@ -17,6 +17,53 @@ export function isProviderString(value: unknown): value is string {
 	return typeof value === 'string' && value.trim().length > 0;
 }
 
+function throwProviderError(
+	operation: string,
+	status: number,
+	data: unknown,
+	userInfo: boolean
+): never {
+	const providerError = isProviderObject(data) ? data['error'] : undefined;
+	const code = isProviderObject(providerError)
+		? providerError['code']
+		: providerError;
+	const rejections = [
+		'invalid_grant',
+		'invalid_token',
+		'invalid_code',
+		'access_denied',
+		'interaction_required',
+		'login_required',
+		'consent_required',
+		'InvalidAuthenticationToken',
+	];
+	const rejected = (userInfo && status === 401) || (
+		status >= 400 && status < 500 && status !== 408 && status !== 429 &&
+		typeof code === 'string' && rejections.includes(code)
+	);
+	if (rejected) {
+		throw new ProviderAuthenticationRejectedError(
+			`${operation} failed: ${status}`
+		);
+	}
+	throw new Error(`${operation} failed: ${status}`);
+}
+
+export async function throwProviderResponseError(
+	operation: string,
+	response: Response,
+	userInfo = false
+): Promise<never> {
+	let data: unknown;
+	try {
+		data = await response.json();
+	}
+	catch {
+		data = undefined;
+	}
+	throwProviderError(operation, response.status, data, userInfo);
+}
+
 /**
  * Fetch and decode a provider response without exposing its body or transport
  * error. Causes remain attached for trusted operational diagnostics.
@@ -54,32 +101,7 @@ export async function requestProviderJson(
 	}
 
 	if (!response.ok) {
-		const providerError = isProviderObject(data)
-			? data['error']
-			: undefined;
-		const code = isProviderObject(providerError)
-			? providerError['code']
-			: providerError;
-		const rejections = [
-			'invalid_grant',
-			'invalid_token',
-			'invalid_code',
-			'access_denied',
-			'interaction_required',
-			'login_required',
-			'consent_required',
-			'InvalidAuthenticationToken',
-		];
-		if (
-			response.status >= 400 && response.status < 500 &&
-			response.status !== 408 && response.status !== 429 &&
-			typeof code === 'string' && rejections.includes(code)
-		) {
-			throw new ProviderAuthenticationRejectedError(
-				`${operation} failed: ${response.status}`
-			);
-		}
-		throw new Error(`${operation} failed: ${response.status}`);
+		throwProviderError(operation, response.status, data, userInfo);
 	}
 
 	if (!isProviderObject(data)) {
