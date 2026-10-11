@@ -10,6 +10,7 @@ export interface SSOAuthenticationOptions extends AuthOptions {
 	provider: string;
 	// eslint-disable-next-line max-len
 	stateExpiryMinutes?: number; // Expiry time for state parameter (default: 10)
+	requestTimeoutMs?: number;
 	// Token encryption keys (optional)
 	encryptionPublicKey?: crypto.KeyObject;
 	encryptionPrivateKey?: crypto.KeyObject;
