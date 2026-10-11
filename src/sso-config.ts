@@ -25,6 +25,7 @@ export interface SSOStateRecord {
 	created_at: Date;
 	expires_at: Date;
 	used_at?: Date;
+	consumption_id?: string;
 }
 
 /**
