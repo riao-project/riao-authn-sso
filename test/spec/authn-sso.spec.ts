@@ -573,6 +573,38 @@ describe('Authentication - SSO', () => {
 			expect(error?.message).toContain('State has been consumed');
 		});
 
+		it(
+			'should not claim state that expires between read and update',
+			async () => {
+				const state = await auth.generateState();
+				const repository = auth['ssoStateRepo'];
+				const update = repository.update.bind(repository);
+
+				spyOn(repository, 'update').and.callFake(async (options) => {
+					if ('consumption_id' in options.set) {
+						await update({
+							set: { expires_at: new Date(Date.now() - 1000) },
+							where: { state },
+						});
+					}
+					await update(options);
+				});
+
+				let error: Error | undefined;
+				try {
+					await auth.validateState(state);
+				}
+				catch (caught) {
+					error = caught as Error;
+				}
+
+				expect(error).toBeDefined();
+				expect(error?.message).toContain('consumed or expired');
+				expect((await auth.getStoredState(state))?.consumption_id)
+					.toBeUndefined();
+			}
+		);
+
 		// eslint-disable-next-line max-len
 		it('should authenticate with valid state parameter', async () => {
 			const state = await auth.generateState();

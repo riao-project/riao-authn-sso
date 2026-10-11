@@ -1,6 +1,11 @@
 import { Authentication, Principal } from '@riao/iam';
 import { Encryptor, Decryptor } from '@riao/crypto';
-import { QueryRepository, DatabaseRecordId } from '@riao/dbal';
+import {
+	DatabaseFunctions,
+	gt,
+	QueryRepository,
+	DatabaseRecordId,
+} from '@riao/dbal';
 import { randomBytes } from 'crypto';
 import {
 	SSOTokenRecord,
@@ -344,11 +349,20 @@ export abstract class SSOAuthentication<
 			throw new Error('State has been consumed');
 		}
 
-		// Mark state as used
+		const consumptionId = randomBytes(32).toString('hex');
 		await this.ssoStateRepo.update({
-			set: { used_at: now },
-			where: { state },
+			set: { used_at: new Date(), consumption_id: consumptionId },
+			where: {
+				state,
+				provider: this.provider,
+				used_at: null,
+				expires_at: gt(DatabaseFunctions.currentTimestamp()),
+			},
 		});
+		const consumed = await this.getStoredState(state);
+		if (consumed?.consumption_id !== consumptionId) {
+			throw new Error('State has been consumed or expired');
+		}
 
 		return true;
 	}
