@@ -1,12 +1,11 @@
-import { DatabaseRecordId, Database } from '@riao/dbal';
-import { AuthOptions } from '@riao/iam/auth/auth';
+import { DatabaseRecordId } from '@riao/dbal';
+import { AuthenticationOptions } from '@riao/iam/authentication';
 import * as crypto from 'crypto';
 
 /**
  * SSO authentication configuration options
  */
-export interface SSOAuthenticationOptions extends AuthOptions {
-	db: Database;
+export interface SSOAuthenticationOptions extends AuthenticationOptions {
 	provider: string;
 	// eslint-disable-next-line max-len
 	stateExpiryMinutes?: number; // Expiry time for state parameter (default: 10)
