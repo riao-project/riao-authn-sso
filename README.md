@@ -2,9 +2,7 @@
 
 ## SSO Callback State
 
-Always generate state before redirecting to the identity provider and pass the
-callback's non-empty `state` value to `authenticate`. Missing, invalid, expired,
-or reused state is rejected before authorization-code exchange.
+Always generate state before redirecting to the identity provider and pass the callback's non-empty `state` value to `authenticate`. Missing, invalid, expired, or reused state is rejected before authorization-code exchange.
 
 ## Contributing & Development
 
