@@ -6,6 +6,8 @@ Provider adapters can opt in to bounded requests by calling `requestProviderJson
 
 Existing adapters can use the exported `throwProviderResponseError` helper to classify HTTP response failures without adopting the request helper.
 
+`requestProviderJson` preserves a caller-provided `options.signal` alongside its timeout signal. Either cancellation source aborts the request.
+
 Provider-facing error messages omit response bodies and transport details. Their `cause` is retained for trusted server-side diagnostics and should not be returned to clients.
 
 ## SSO Callback State

@@ -81,9 +81,12 @@ export async function requestProviderJson(
 	let response: Response | undefined;
 	let data: unknown;
 	try {
+		const timeoutSignal = AbortSignal.timeout(timeoutMs);
 		response = await fetch(url, {
 			...options,
-			signal: AbortSignal.timeout(timeoutMs),
+			signal: options.signal
+				? AbortSignal.any([options.signal, timeoutSignal])
+				: timeoutSignal,
 		});
 		if (userInfo && response.status === 401) {
 			throw new ProviderAuthenticationRejectedError(

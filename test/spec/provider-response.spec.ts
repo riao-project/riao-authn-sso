@@ -7,6 +7,62 @@ import {
 } from '../../src/provider-response';
 
 describe('SSO provider response helpers', () => {
+	it('preserves an already-aborted caller signal', async () => {
+		const controller = new AbortController();
+		const reason = new Error('Caller cancelled');
+		controller.abort(reason);
+		spyOn(global, 'fetch').and.callFake(async (_url, options) => {
+			expect(options?.signal?.aborted).toBe(true);
+			expect(options?.signal?.reason).toBe(reason);
+			options?.signal?.throwIfAborted();
+			throw new Error('Expected an aborted request');
+		});
+
+		await expectAsync(requestProviderJson(
+			'https://provider.example/token',
+			{ signal: controller.signal },
+			'Token exchange',
+			250
+		)).toBeRejectedWith(jasmine.objectContaining({
+			message: 'Token exchange failed: unavailable; ' +
+				'provider unavailable or invalid JSON',
+			cause: reason,
+		}));
+	});
+
+	for (const source of ['caller', 'timeout']) {
+		it(`cancels a pending request on ${source} abort`, async () => {
+			const caller = new AbortController();
+			const timeout = new AbortController();
+			const reason = new Error(`${source} cancelled`);
+			spyOn(AbortSignal, 'timeout').and.returnValue(timeout.signal);
+			const fetchSpy = spyOn(global, 'fetch').and.callFake(
+				async (_url, options) => new Promise<Response>((_resolve, reject) => {
+					options?.signal?.addEventListener('abort', () => {
+						reject(options.signal?.reason);
+					}, { once: true });
+				})
+			);
+
+			const request = requestProviderJson(
+				'https://provider.example/token',
+				{ signal: caller.signal },
+				'Token exchange',
+				250
+			);
+			expect(fetchSpy).toHaveBeenCalledTimes(1);
+			(source === 'caller' ? caller : timeout).abort(reason);
+
+			await expectAsync(request).toBeRejectedWith(
+				jasmine.objectContaining({
+					message: 'Token exchange failed: unavailable; ' +
+						'provider unavailable or invalid JSON',
+					cause: reason,
+				})
+			);
+		});
+	}
+
 	it('adds a timeout signal to provider requests', async () => {
 		const timeoutSpy = spyOn(AbortSignal, 'timeout').and.callThrough();
 		const fetchSpy = spyOn(global, 'fetch').and.resolveTo(
