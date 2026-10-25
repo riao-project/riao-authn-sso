@@ -39,10 +39,12 @@ export abstract class SSOAuthentication<
 		super(options);
 		this.provider = options.provider;
 		this.stateExpiryMinutes = options.stateExpiryMinutes ?? 10;
+
 		if (!Number.isFinite(this.stateExpiryMinutes) ||
 			this.stateExpiryMinutes <= 0) {
 			throw new Error('SSO state expiry must be positive');
 		}
+
 		this.requestTimeoutMs = options.requestTimeoutMs ?? 10000;
 		if (
 			!Number.isFinite(this.requestTimeoutMs) ||
@@ -50,18 +52,22 @@ export abstract class SSOAuthentication<
 		) {
 			throw new Error('SSO provider request timeout must be positive');
 		}
+
 		this.ssoTokenRepo = options.db.getQueryRepository<SSOTokenRecord>({
 			table: 'iam_sso_tokens',
 			identifiedBy: 'id',
 		});
+
 		this.ssoStateRepo = options.db.getQueryRepository<SSOStateRecord>({
 			table: 'iam_sso_state',
 			identifiedBy: 'state',
 		});
+
 		// Initialize encryption/decryption if keys provided
 		if (options.encryptionPublicKey) {
 			this.encryptor = new Encryptor(options.encryptionPublicKey);
 		}
+
 		if (options.encryptionPrivateKey) {
 			this.decryptor = new Decryptor(options.encryptionPrivateKey);
 		}
@@ -114,6 +120,7 @@ export abstract class SSOAuthentication<
 		const attempt = {
 			scheme: `sso:${this.provider}`, subject: this.provider,
 		};
+
 		const protection = await this.beforeAuthenticationAttempt(attempt);
 		if (!protection.allowed) {
 			return null;
@@ -124,7 +131,7 @@ export abstract class SSOAuthentication<
 			if (typeof credentials?.code !== 'string' || !credentials.code) {
 				throw new AuthenticationRejectedError('Missing code');
 			}
-			if (
+			else if (
 				typeof credentials.state !== 'string' ||
 				!credentials.state
 			) {
@@ -132,7 +139,9 @@ export abstract class SSOAuthentication<
 					'Missing state parameter'
 				);
 			}
+
 			await this.validateState(credentials.state);
+
 			const tokenData = await this.exchangeAuthorizationCode(
 				credentials.code
 			);
@@ -140,30 +149,36 @@ export abstract class SSOAuthentication<
 			const existing = await this.principalRepo.findOne({
 				where: <TPrincipal>{ login: userInfo.login },
 			});
+
 			let active = existing
 				? await this.findActivePrincipal({
 					where: <TPrincipal>{ id: existing.id },
 				})
 				: null;
+
 			if (existing && !active) {
 				throw new AuthenticationRejectedError('Inactive principal');
 			}
-			if (!existing) {
+			else if (!existing) {
 				const newPrincipalId = await this.createPrincipal({
 					login: userInfo.login,
 					name: userInfo.name,
 					type: userInfo.type,
 				} as unknown as TPrincipal);
+
 				active = await this.findActivePrincipal({
 					where: <TPrincipal>{ id: newPrincipalId },
 				});
 			}
+
 			if (!active) {
 				throw new Error(
 					'Unable to resolve newly created SSO principal'
 				);
 			}
+
 			principal = active;
+
 			await this.saveTokens(
 				principal.id, userInfo.id, tokenData, userInfo
 			);
@@ -172,16 +187,21 @@ export abstract class SSOAuthentication<
 			if (error instanceof AuthenticationBlockedError) {
 				return null;
 			}
+
 			if (
 				!(error instanceof AuthenticationRejectedError) &&
 				!(error instanceof ProviderAuthenticationRejectedError)
 			) {
 				throw error;
 			}
+
 			await this.recordAuthenticationFailure(attempt);
+
 			return null;
 		}
+
 		await this.recordAuthenticationSuccess(attempt);
+
 		return principal;
 	}
 
