@@ -96,6 +96,7 @@ describe('Authentication - SSO', () => {
 		it('should create a new principal on first SSO authentication', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
+				state: await auth.generateState(),
 			});
 
 			expect(principal).not.toBeNull();
@@ -109,6 +110,7 @@ describe('Authentication - SSO', () => {
 			// First authentication - creates principal
 			const firstAuth = await auth.authenticate({
 				code: 'valid-code',
+				state: await auth.generateState(),
 			});
 
 			expect(firstAuth).not.toBeNull();
@@ -117,6 +119,7 @@ describe('Authentication - SSO', () => {
 			// Second authentication with same code
 			const secondAuth = await auth.authenticate({
 				code: 'valid-code',
+				state: await auth.generateState(),
 			});
 
 			expect(secondAuth).not.toBeNull();
@@ -129,6 +132,7 @@ describe('Authentication - SSO', () => {
 			try {
 				await auth.authenticate({
 					code: 'invalid-code',
+					state: await auth.generateState(),
 				});
 			}
 			catch (err) {
@@ -143,6 +147,7 @@ describe('Authentication - SSO', () => {
 		it('should save SSO tokens after successful authentication', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
+				state: await auth.generateState(),
 			});
 
 			if (!principal) {
@@ -162,6 +167,7 @@ describe('Authentication - SSO', () => {
 		it('should update existing SSO token on re-authentication', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
+				state: await auth.generateState(),
 			});
 
 			if (!principal) {
@@ -174,6 +180,7 @@ describe('Authentication - SSO', () => {
 			// Re-authenticate
 			await auth.authenticate({
 				code: 'valid-code',
+				state: await auth.generateState(),
 			});
 
 			const secondToken = await auth.getStoredToken(principal.id);
@@ -187,6 +194,7 @@ describe('Authentication - SSO', () => {
 		it('should refresh access token using refresh token', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
+				state: await auth.generateState(),
 			});
 
 			if (!principal) {
@@ -202,6 +210,7 @@ describe('Authentication - SSO', () => {
 		it('should update stored token with new values after refresh', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
+				state: await auth.generateState(),
 			});
 
 			if (!principal) {
@@ -219,6 +228,7 @@ describe('Authentication - SSO', () => {
 		it('should return null if refresh token does not exist', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
+				state: await auth.generateState(),
 			});
 
 			if (!principal) {
@@ -242,6 +252,7 @@ describe('Authentication - SSO', () => {
 		it('should retrieve stored SSO token by principal ID', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
+				state: await auth.generateState(),
 			});
 
 			if (!principal) {
@@ -272,6 +283,7 @@ describe('Authentication - SSO', () => {
 		it('should delete SSO tokens for a principal', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
+				state: await auth.generateState(),
 			});
 
 			if (!principal) {
@@ -294,6 +306,7 @@ describe('Authentication - SSO', () => {
 		it('should allow re-authentication after session revocation', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
+				state: await auth.generateState(),
 			});
 
 			if (!principal) {
@@ -306,6 +319,7 @@ describe('Authentication - SSO', () => {
 			// Re-authenticate
 			const reAuthPrincipal = await auth.authenticate({
 				code: 'valid-code',
+				state: await auth.generateState(),
 			});
 
 			expect(reAuthPrincipal).not.toBeNull();
@@ -343,6 +357,7 @@ describe('Authentication - SSO', () => {
 		it('should set token expiration based on expires_in value', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
+				state: await auth.generateState(),
 			});
 
 			if (!principal) {
@@ -365,6 +380,7 @@ describe('Authentication - SSO', () => {
 		it('should update expiration time on token refresh', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
+				state: await auth.generateState(),
 			});
 
 			if (!principal) {
@@ -390,6 +406,7 @@ describe('Authentication - SSO', () => {
 		it('should store provider-specific user information in metadata', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
+				state: await auth.generateState(),
 			});
 
 			if (!principal) {
@@ -477,9 +494,11 @@ describe('Authentication - SSO', () => {
 
 				const principal1 = await multiAuth.authenticate({
 					code: 'valid-code-1',
+					state: await multiAuth.generateState(),
 				});
 				const principal2 = await multiAuth.authenticate({
 					code: 'valid-code-2',
+					state: await multiAuth.generateState(),
 				});
 
 				expect(principal1).not.toBeNull();
@@ -603,14 +622,33 @@ describe('Authentication - SSO', () => {
 			expect(error?.message).toContain('State validation failed');
 		});
 
-		// eslint-disable-next-line max-len
-		it('should allow authentication without state (backward compatibility)', async () => {
-			const principal = await auth.authenticate({
-				code: 'valid-code',
-			});
+		it(
+			'should reject missing state before exchanging the code',
+			async () => {
+				const exchange = spyOn(
+					auth, 'exchangeAuthorizationCode'
+				).and.callThrough();
+				const credentials = { code: 'valid-code' } as {
+					code: string;
+					state: string;
+				};
 
-			expect(principal).not.toBeNull();
-			expect(principal?.login).toEqual('testuser@example.com');
+				await expectAsync(auth.authenticate(credentials))
+					.toBeRejectedWithError('Missing state parameter');
+				expect(exchange).not.toHaveBeenCalled();
+			}
+		);
+
+		it('should reject empty state before exchanging the code', async () => {
+			const exchange = spyOn(
+				auth, 'exchangeAuthorizationCode'
+			).and.callThrough();
+
+			await expectAsync(auth.authenticate({
+				code: 'valid-code',
+				state: '',
+			})).toBeRejectedWithError('Missing state parameter');
+			expect(exchange).not.toHaveBeenCalled();
 		});
 
 		// eslint-disable-next-line max-len
@@ -669,6 +707,7 @@ describe('Authentication - SSO', () => {
 		it('should encrypt tokens before storing in database', async () => {
 			const principal = await encryptedAuth.authenticate({
 				code: 'valid-code',
+				state: await encryptedAuth.generateState(),
 			});
 
 			if (!principal) {
@@ -701,6 +740,7 @@ describe('Authentication - SSO', () => {
 		it('should decrypt tokens when retrieving from database', async () => {
 			const principal = await encryptedAuth.authenticate({
 				code: 'valid-code',
+				state: await encryptedAuth.generateState(),
 			});
 
 			if (!principal) {
@@ -719,6 +759,7 @@ describe('Authentication - SSO', () => {
 		it('should encrypt new tokens on refresh with encryption', async () => {
 			const principal = await encryptedAuth.authenticate({
 				code: 'valid-code',
+				state: await encryptedAuth.generateState(),
 			});
 
 			if (!principal) {
@@ -747,6 +788,7 @@ describe('Authentication - SSO', () => {
 		it('should decrypt refresh token before using it', async () => {
 			const principal = await encryptedAuth.authenticate({
 				code: 'valid-code',
+				state: await encryptedAuth.generateState(),
 			});
 
 			if (!principal) {
@@ -768,6 +810,7 @@ describe('Authentication - SSO', () => {
 		it('should decrypt refresh token to access new token', async () => {
 			const principal = await encryptedAuth.authenticate({
 				code: 'valid-code',
+				state: await encryptedAuth.generateState(),
 			});
 
 			if (!principal) {
@@ -788,6 +831,7 @@ describe('Authentication - SSO', () => {
 		it('should handle different data for access and refresh tokens', async () => {
 			const principal = await encryptedAuth.authenticate({
 				code: 'valid-code',
+				state: await encryptedAuth.generateState(),
 			});
 
 			if (!principal) {
@@ -813,6 +857,7 @@ describe('Authentication - SSO', () => {
 		it('should support revokeSession with encryption enabled', async () => {
 			const principal = await encryptedAuth.authenticate({
 				code: 'valid-code',
+				state: await encryptedAuth.generateState(),
 			});
 
 			if (!principal) {
@@ -846,6 +891,7 @@ describe('Authentication - SSO', () => {
 
 			const principal = await partialAuth.authenticate({
 				code: 'valid-code',
+				state: await partialAuth.generateState(),
 			});
 
 			if (!principal) {
@@ -883,6 +929,7 @@ describe('Authentication - SSO', () => {
 
 			const principal = await encAuth.authenticate({
 				code: 'valid-code',
+				state: await encAuth.generateState(),
 			});
 
 			if (!principal) {
