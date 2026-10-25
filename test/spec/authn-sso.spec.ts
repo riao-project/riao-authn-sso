@@ -544,7 +544,7 @@ describe('Authentication - SSO', () => {
 	});
 
 	describe('CSRF protection - state validation', () => {
-		it('allows only one concurrent consumer of the same state', async () => {
+		it('allows only one concurrent state consumer', async () => {
 			const state = await auth.generateState();
 			const results = await Promise.allSettled([
 				auth.validateState(state), auth.validateState(state),
@@ -570,7 +570,7 @@ describe('Authentication - SSO', () => {
 			expect(exchange).not.toHaveBeenCalled();
 		});
 
-		it('rejects replayed state before contacting the provider', async () => {
+		it('rejects replayed state before provider requests', async () => {
 			const state = await auth.generateState();
 			await auth.validateState(state);
 			const exchange = spyOn(auth, 'exchangeAuthorizationCode');

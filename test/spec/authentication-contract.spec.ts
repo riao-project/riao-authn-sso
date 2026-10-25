@@ -64,13 +64,15 @@ describe('SSO authentication contract (isolated)', () => {
 			db, provider: 'test', authenticationProtection: protection,
 		});
 		spyOn(auth, 'validateState').and.resolveTo(true);
-		spyOn(auth, 'findActivePrincipal').and.resolveTo(principal as Principal);
+		spyOn(auth, 'findActivePrincipal').and.resolveTo(
+			principal as Principal
+		);
 		spyOn(auth, 'createPrincipal').and.resolveTo('new-id');
 		spyOn(auth, 'exchangeAuthorizationCode').and.callThrough();
 		spyOn(auth, 'saveTokens' as never).and.resolveTo();
 	});
 
-	it('denies before provider or state work without recording an outcome', async () => {
+	it('denies before state/provider work without an outcome', async () => {
 		protection.beforeAttempt.and.resolveTo({ allowed: false });
 		expect(await auth.authenticate(credentials)).toBeNull();
 		expect(auth.validateState).not.toHaveBeenCalled();
@@ -79,7 +81,7 @@ describe('SSO authentication contract (isolated)', () => {
 		expect(protection.onSuccess).not.toHaveBeenCalled();
 	});
 
-	it('records success once after saving tokens without exposing credentials', async () => {
+	it('records success after saving tokens without credentials', async () => {
 		expect(await auth.authenticate(credentials)).toEqual(principal);
 		expect(protection.onSuccess).toHaveBeenCalledTimes(1);
 		expect(protection.onFailure).not.toHaveBeenCalled();
@@ -123,20 +125,23 @@ describe('SSO authentication contract (isolated)', () => {
 	it('propagates provider outages without failure callbacks', async () => {
 		const outage = new Error('Outage');
 		(auth.exchangeAuthorizationCode as jasmine.Spy).and.rejectWith(outage);
-		await expectAsync(auth.authenticate(credentials)).toBeRejectedWith(outage);
+		await expectAsync(auth.authenticate(credentials))
+			.toBeRejectedWith(outage);
 		expect(protection.onFailure).not.toHaveBeenCalled();
 	});
 
 	it('propagates storage errors without recording failure', async () => {
 		const outage = new Error('Database unavailable');
 		repo.findOne.and.rejectWith(outage);
-		await expectAsync(auth.authenticate(credentials)).toBeRejectedWith(outage);
+		await expectAsync(auth.authenticate(credentials))
+			.toBeRejectedWith(outage);
 		expect(protection.onFailure).not.toHaveBeenCalled();
 	});
 
 	it('rejects missing code before exchange', async () => {
 		for (const input of [{ code: '' }, undefined]) {
-			expect(await auth.authenticate(input as typeof credentials)).toBeNull();
+			expect(await auth.authenticate(input as typeof credentials))
+				.toBeNull();
 		}
 		expect(protection.onFailure).toHaveBeenCalledTimes(2);
 		expect(auth.exchangeAuthorizationCode).not.toHaveBeenCalled();
@@ -160,7 +165,9 @@ describe('SSO authentication contract (isolated)', () => {
 	});
 
 	it('records invalid, expired and replayed state as rejection', async () => {
-		for (const message of ['Invalid state', 'Expired state', 'Replayed state']) {
+		for (const message of [
+			'Invalid state', 'Expired state', 'Replayed state',
+		]) {
 			(auth.validateState as jasmine.Spy).and.rejectWith(
 				new AuthenticationRejectedError(message)
 			);
@@ -170,14 +177,15 @@ describe('SSO authentication contract (isolated)', () => {
 		expect(auth.exchangeAuthorizationCode).not.toHaveBeenCalled();
 	});
 
-	it('propagates state database failure without counting rejection', async () => {
+	it('propagates state DB failure without counting rejection', async () => {
 		const outage = new Error('State database unavailable');
 		(auth.validateState as jasmine.Spy).and.rejectWith(outage);
-		await expectAsync(auth.authenticate(credentials)).toBeRejectedWith(outage);
+		await expectAsync(auth.authenticate(credentials))
+			.toBeRejectedWith(outage);
 		expect(protection.onFailure).not.toHaveBeenCalled();
 	});
 
-	it('does not provision a replacement for an inactive principal', async () => {
+	it('does not replace an inactive principal', async () => {
 		(auth.findActivePrincipal as jasmine.Spy).and.resolveTo(null);
 		expect(await auth.authenticate(credentials)).toBeNull();
 		expect(auth.createPrincipal).not.toHaveBeenCalled();
@@ -191,7 +199,7 @@ describe('SSO authentication contract (isolated)', () => {
 		expect(protection.onSuccess).toHaveBeenCalledTimes(1);
 	});
 
-	it('propagates a miss resolving a newly created principal operationally', async () => {
+	it('treats a missing newly created principal as operational', async () => {
 		repo.findOne.and.resolveTo(null);
 		(auth.findActivePrincipal as jasmine.Spy).and.resolveTo(null);
 
@@ -203,10 +211,11 @@ describe('SSO authentication contract (isolated)', () => {
 		expect(protection.onSuccess).not.toHaveBeenCalled();
 	});
 
-	it('propagates callback failures without calling failure for success errors', async () => {
+	it('propagates success callback errors without onFailure', async () => {
 		const outage = new Error('Protection storage unavailable');
 		protection.onSuccess.and.rejectWith(outage);
-		await expectAsync(auth.authenticate(credentials)).toBeRejectedWith(outage);
+		await expectAsync(auth.authenticate(credentials))
+			.toBeRejectedWith(outage);
 		expect(protection.onFailure).not.toHaveBeenCalled();
 	});
 });

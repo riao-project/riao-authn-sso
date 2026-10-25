@@ -111,7 +111,9 @@ export abstract class SSOAuthentication<
 		code: string;
 		state: string;
 	}): Promise<TPrincipal | null> {
-		const attempt = { scheme: `sso:${this.provider}`, subject: this.provider };
+		const attempt = {
+			scheme: `sso:${this.provider}`, subject: this.provider,
+		};
 		const protection = await this.beforeAuthenticationAttempt(attempt);
 		if (!protection.allowed) {
 			return null;
@@ -162,7 +164,9 @@ export abstract class SSOAuthentication<
 				);
 			}
 			principal = active;
-			await this.saveTokens(principal.id, userInfo.id, tokenData, userInfo);
+			await this.saveTokens(
+				principal.id, userInfo.id, tokenData, userInfo
+			);
 		}
 		catch (error) {
 			if (error instanceof AuthenticationBlockedError) {

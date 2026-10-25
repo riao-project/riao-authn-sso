@@ -7,7 +7,7 @@ import {
 } from '../../src/provider-response';
 
 describe('SSO provider rejection classification', () => {
-	it('classifies known credential rejections without provider details', async () => {
+	it('classifies credential rejections without details', async () => {
 		const response = new Response(JSON.stringify({
 			error: 'invalid_grant',
 			error_description: 'secret-token',
@@ -18,7 +18,7 @@ describe('SSO provider rejection classification', () => {
 		)).toBeRejectedWithError(ProviderAuthenticationRejectedError);
 	});
 
-	it('keeps outages and throttling operational without response details', async () => {
+	it('keeps outages/throttling operational without details', async () => {
 		for (const status of [429, 503]) {
 			const response = new Response(JSON.stringify({
 				error: 'invalid_grant',
@@ -38,7 +38,7 @@ describe('SSO provider rejection classification', () => {
 		}
 	});
 
-	it('classifies a provider user-info 401 as credential rejection', async () => {
+	it('classifies user-info 401 as credential rejection', async () => {
 		const response = new Response('secret-token', { status: 401 });
 
 		await expectAsync(throwProviderResponseError(
