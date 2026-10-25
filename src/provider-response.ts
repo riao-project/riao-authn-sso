@@ -46,7 +46,7 @@ function throwProviderError(
 			`${operation} failed: ${status}`
 		);
 	}
-	throw new Error(`${operation} failed: ${status}`);
+	throw new Error(`${operation} failed: ${status}`, { cause: data });
 }
 
 export async function throwProviderResponseError(
