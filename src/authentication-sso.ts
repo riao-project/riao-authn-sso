@@ -87,16 +87,16 @@ export abstract class SSOAuthentication<
 	/**
 	 * Generic authenticate implementation
 	 * Orchestrates: code exchange → user info → principal → tokens
-	 * Validates state parameter for CSRF protection if provided
+	 * Requires and validates state before exchanging the authorization code
 	 */
 	public override async authenticate(credentials: {
 		code: string;
-		state?: string;
+		state: string;
 	}): Promise<TPrincipal | null> {
-		// Validate state if provided for CSRF protection
-		if (credentials.state) {
-			await this.validateState(credentials.state);
+		if (typeof credentials?.state !== 'string' || !credentials.state) {
+			throw new Error('Missing state parameter');
 		}
+		await this.validateState(credentials.state);
 
 		// Exchange code for tokens
 		const tokenData = await this.exchangeAuthorizationCode(
