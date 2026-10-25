@@ -601,7 +601,7 @@ describe('Authentication - SSO', () => {
 				expect(error).toBeDefined();
 				expect(error?.message).toContain('consumed or expired');
 				expect((await auth.getStoredState(state))?.consumption_id)
-					.toBeUndefined();
+					.toBeNull();
 			}
 		);
 
