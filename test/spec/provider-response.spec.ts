@@ -37,11 +37,12 @@ describe('SSO provider response helpers', () => {
 			const reason = new Error(`${source} cancelled`);
 			spyOn(AbortSignal, 'timeout').and.returnValue(timeout.signal);
 			const fetchSpy = spyOn(global, 'fetch').and.callFake(
-				async (_url, options) => new Promise<Response>((_resolve, reject) => {
-					options?.signal?.addEventListener('abort', () => {
-						reject(options.signal?.reason);
-					}, { once: true });
-				})
+				async (_url, options) =>
+					new Promise<Response>((_resolve, reject) => {
+						options?.signal?.addEventListener('abort', () => {
+							reject(options.signal?.reason);
+						}, { once: true });
+					})
 			);
 
 			const request = requestProviderJson(
