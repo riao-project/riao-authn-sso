@@ -2,7 +2,7 @@
 
 ## Provider Request Safety
 
-SSO provider requests use a bounded timeout. Configure `requestTimeoutMs` on the authentication provider (default: 10,000 ms) to tune the limit. Token and user-info responses are validated before use. Expected credential rejections are reported as `ProviderAuthenticationRejectedError`; malformed responses, timeouts, and other provider failures remain operational errors.
+Provider adapters can opt in to bounded requests by calling `requestProviderJson` with the configured `requestTimeoutMs` (default: 10,000 ms), and validate decoded responses with `validateTokenResponse` and `validateProviderUser`. The request and response-classification helpers report expected credential rejections as `ProviderAuthenticationRejectedError`; malformed responses, timeouts, and other provider failures remain operational errors. These protections apply only to adapters that adopt the helpers; this change does not update existing adapters.
 
 Existing adapters can use the exported `throwProviderResponseError` helper to classify HTTP response failures without adopting the request helper.
 
