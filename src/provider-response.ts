@@ -58,8 +58,11 @@ export async function throwProviderResponseError(
 	try {
 		data = await response.json();
 	}
-	catch {
-		data = undefined;
+	catch (cause) {
+		if (userInfo && response.status === 401) {
+			throwProviderError(operation, response.status, undefined, userInfo);
+		}
+		throw new Error(`${operation} failed: ${response.status}`, { cause });
 	}
 	throwProviderError(operation, response.status, data, userInfo);
 }
