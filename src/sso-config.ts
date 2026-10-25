@@ -9,6 +9,7 @@ export interface SSOAuthenticationOptions extends AuthenticationOptions {
 	provider: string;
 	// eslint-disable-next-line max-len
 	stateExpiryMinutes?: number; // Expiry time for state parameter (default: 10)
+	requestTimeoutMs?: number;
 	// Token encryption keys (optional)
 	encryptionPublicKey?: crypto.KeyObject;
 	encryptionPrivateKey?: crypto.KeyObject;
@@ -24,6 +25,7 @@ export interface SSOStateRecord {
 	created_at: Date;
 	expires_at: Date;
 	used_at?: Date;
+	consumption_id?: string;
 }
 
 /**

@@ -142,12 +142,12 @@ describe('SSO authentication contract (isolated)', () => {
 		expect(auth.exchangeAuthorizationCode).not.toHaveBeenCalled();
 	});
 
-	it('allows callbacks without state for baseline compatibility', async () => {
-		expect(await auth.authenticate({ code: 'secret-code' })).toEqual(
-			principal
-		);
+	it('rejects callbacks without state before exchange', async () => {
+		const input = { code: 'secret-code' } as typeof credentials;
+		expect(await auth.authenticate(input)).toBeNull();
 		expect(auth.validateState).not.toHaveBeenCalled();
-		expect(protection.onSuccess).toHaveBeenCalledTimes(1);
+		expect(auth.exchangeAuthorizationCode).not.toHaveBeenCalled();
+		expect(protection.onFailure).toHaveBeenCalledTimes(1);
 	});
 
 	it('rejects an empty state before exchange', async () => {

@@ -653,6 +653,83 @@ describe('Authentication - SSO', () => {
 			expect(error?.message).toContain('State has been consumed');
 		});
 
+		it('should allow only one concurrent state claim', async () => {
+			const state = await auth.generateState();
+			const repository = auth['ssoStateRepo'];
+			const findOne = repository.findOne.bind(repository);
+			let initialReads = 0;
+			let releaseReads!: () => void;
+			const bothRead = new Promise<void>((resolve) => {
+				releaseReads = resolve;
+			});
+
+			spyOn(repository, 'findOne').and.callFake(async (options) => {
+				const record = await findOne(options);
+				if (initialReads < 2) {
+					expect(record).not.toBeNull();
+					expect(record?.used_at).toBeNull();
+					initialReads++;
+					if (initialReads === 2) {
+						releaseReads();
+					}
+					await bothRead;
+				}
+				return record;
+			});
+
+			const results = await Promise.allSettled([
+				auth.validateState(state),
+				auth.validateState(state),
+			]);
+
+			expect(initialReads).toBe(2);
+			expect(results.filter((result) => result.status === 'fulfilled'))
+				.toEqual([{ status: 'fulfilled', value: true }]);
+			const rejected = results.filter(
+				(result) => result.status === 'rejected'
+			);
+			expect(rejected.length).toBe(1);
+			for (const result of rejected) {
+				if (result.status === 'rejected') {
+					expect(result.reason).toEqual(
+						new Error('State has been consumed or expired')
+					);
+				}
+			}
+		});
+
+		it(
+			'should not claim state that expires between read and update',
+			async () => {
+				const state = await auth.generateState();
+				const repository = auth['ssoStateRepo'];
+				const update = repository.update.bind(repository);
+
+				spyOn(repository, 'update').and.callFake(async (options) => {
+					if ('consumption_id' in options.set) {
+						await update({
+							set: { expires_at: new Date(Date.now() - 1000) },
+							where: { state },
+						});
+					}
+					await update(options);
+				});
+
+				let error: Error | undefined;
+				try {
+					await auth.validateState(state);
+				}
+				catch (caught) {
+					error = caught as Error;
+				}
+
+				expect(error).toBeDefined();
+				expect(error?.message).toContain('consumed or expired');
+				expect((await auth.getStoredState(state))?.consumption_id)
+					.toBeNull();
+			}
+		);
+
 		// eslint-disable-next-line max-len
 		it('should authenticate with valid state parameter', async () => {
 			const state = await auth.generateState();
@@ -673,13 +750,32 @@ describe('Authentication - SSO', () => {
 			})).toBeNull();
 		});
 
-		// eslint-disable-next-line max-len
-		it('should reject authentication without state', async () => {
-			const principal = await auth.authenticate({
+		it(
+			'should reject missing state before exchanging the code',
+			async () => {
+				const exchange = spyOn(
+					auth, 'exchangeAuthorizationCode'
+				).and.callThrough();
+				const credentials = { code: 'valid-code' } as {
+					code: string;
+					state: string;
+				};
+
+				expect(await auth.authenticate(credentials)).toBeNull();
+				expect(exchange).not.toHaveBeenCalled();
+			}
+		);
+
+		it('should reject empty state before exchanging the code', async () => {
+			const exchange = spyOn(
+				auth, 'exchangeAuthorizationCode'
+			).and.callThrough();
+
+			expect(await auth.authenticate({
 				code: 'valid-code',
 				state: '',
-			});
-			expect(principal).toBeNull();
+			})).toBeNull();
+			expect(exchange).not.toHaveBeenCalled();
 		});
 
 		// eslint-disable-next-line max-len

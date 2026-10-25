@@ -1,6 +1,11 @@
 import { Authentication, Principal } from '@riao/iam';
 import { Encryptor, Decryptor } from '@riao/crypto';
-import { QueryRepository, DatabaseRecordId } from '@riao/dbal';
+import {
+	DatabaseFunctions,
+	gt,
+	QueryRepository,
+	DatabaseRecordId,
+} from '@riao/dbal';
 import { randomBytes } from 'crypto';
 import {
 	AuthenticationRejectedError,
@@ -24,6 +29,7 @@ export abstract class SSOAuthentication<
 > extends Authentication<TPrincipal> {
 	protected readonly provider: string;
 	protected readonly stateExpiryMinutes: number;
+	protected readonly requestTimeoutMs: number;
 	protected ssoTokenRepo: QueryRepository<SSOTokenRecord>;
 	protected ssoStateRepo: QueryRepository<SSOStateRecord>;
 	protected encryptor?: Encryptor;
@@ -36,6 +42,13 @@ export abstract class SSOAuthentication<
 		if (!Number.isFinite(this.stateExpiryMinutes) ||
 			this.stateExpiryMinutes <= 0) {
 			throw new Error('SSO state expiry must be positive');
+		}
+		this.requestTimeoutMs = options.requestTimeoutMs ?? 10000;
+		if (
+			!Number.isFinite(this.requestTimeoutMs) ||
+			this.requestTimeoutMs <= 0
+		) {
+			throw new Error('SSO provider request timeout must be positive');
 		}
 		this.ssoTokenRepo = options.db.getQueryRepository<SSOTokenRecord>({
 			table: 'iam_sso_tokens',
@@ -91,12 +104,12 @@ export abstract class SSOAuthentication<
 	/**
 	 * Generic authenticate implementation
 	 * Orchestrates: code exchange → user info → principal → tokens
-	 * Validates and consumes state when supplied before contacting provider.
+	 * Requires and consumes state before contacting provider.
 	 * Expected rejection returns null; operational errors propagate.
 	 */
 	public override async authenticate(credentials: {
 		code: string;
-		state?: string;
+		state: string;
 	}): Promise<TPrincipal | null> {
 		const attempt = { scheme: `sso:${this.provider}`, subject: this.provider };
 		const protection = await this.beforeAuthenticationAttempt(attempt);
@@ -109,15 +122,15 @@ export abstract class SSOAuthentication<
 			if (typeof credentials?.code !== 'string' || !credentials.code) {
 				throw new AuthenticationRejectedError('Missing code');
 			}
-			if (credentials.state !== undefined) {
-				if (
-					typeof credentials.state !== 'string' ||
-					!credentials.state
-				) {
-					throw new AuthenticationRejectedError('Invalid state');
-				}
-				await this.validateState(credentials.state);
+			if (
+				typeof credentials.state !== 'string' ||
+				!credentials.state
+			) {
+				throw new AuthenticationRejectedError(
+					'Missing state parameter'
+				);
 			}
+			await this.validateState(credentials.state);
 			const tokenData = await this.exchangeAuthorizationCode(
 				credentials.code
 			);
@@ -378,10 +391,22 @@ export abstract class SSOAuthentication<
 			throw new AuthenticationRejectedError('State has been consumed');
 		}
 
+		const consumptionId = randomBytes(32).toString('hex');
 		await this.ssoStateRepo.update({
-			set: { used_at: now },
-			where: { state },
+			set: { used_at: new Date(), consumption_id: consumptionId },
+			where: {
+				state,
+				provider: this.provider,
+				used_at: null,
+				expires_at: gt(DatabaseFunctions.currentTimestamp()),
+			},
 		});
+		const consumed = await this.getStoredState(state);
+		if (consumed?.consumption_id !== consumptionId) {
+			throw new AuthenticationRejectedError(
+				'State has been consumed or expired'
+			);
+		}
 
 		return true;
 	}
