@@ -92,11 +92,67 @@ describe('Authentication - SSO', () => {
 	});
 
 	describe('authenticate', () => {
+		it('does not replace an existing deactivated identity', async () => {
+			class InactiveSSO extends TestSSOAuthentication {
+				protected override async getUserInfo(): Promise<SSOUserInfo> {
+					return {
+						id: 'inactive-provider-user',
+						login: 'inactive-sso@example.com',
+						name: 'Inactive User', type: 'user',
+					};
+				}
+			}
+			const inactiveAuth = new InactiveSSO({
+				db, provider: 'inactive-test',
+			});
+			const id = await inactiveAuth.createPrincipal({
+				login: 'inactive-sso@example.com',
+				name: 'Inactive User', type: 'user',
+			});
+			await inactiveAuth.deactivatePrincipal(id);
+			expect(await inactiveAuth.authenticate({
+				code: 'valid-code', ...(await inactiveAuth.generateState()),
+			})).toBeNull();
+			expect(await inactiveAuth.principalRepo.count({
+				where: { login: 'inactive-sso@example.com' },
+			})).toBe(1);
+			expect(await inactiveAuth.getStoredToken(id)).toBeNull();
+		});
+		it('prefers an active duplicate principal', async () => {
+			class DuplicateLoginSSO extends TestSSOAuthentication {
+				protected override async getUserInfo(): Promise<SSOUserInfo> {
+					return {
+						id: 'duplicate-provider-user',
+						login: 'duplicate-sso@example.com',
+						name: 'Duplicate User', type: 'user',
+					};
+				}
+			}
+			const duplicateAuth = new DuplicateLoginSSO({
+				db, provider: 'duplicate-test',
+			});
+			const inactiveId = await duplicateAuth.createPrincipal({
+				login: 'duplicate-sso@example.com',
+				name: 'Inactive Duplicate', type: 'user',
+			});
+			await duplicateAuth.deactivatePrincipal(inactiveId);
+			const activeId = await duplicateAuth.createPrincipal({
+				login: 'duplicate-sso@example.com',
+				name: 'Active Duplicate', type: 'user',
+			});
+
+			const principal = await duplicateAuth.authenticate({
+				code: 'valid-code',
+				...(await duplicateAuth.generateState()),
+			});
+
+			expect(String(principal?.id)).toEqual(String(activeId));
+		});
 		// eslint-disable-next-line max-len
 		it('should create a new principal on first SSO authentication', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
-				state: await auth.generateState(),
+				...(await auth.generateState()),
 			});
 
 			expect(principal).not.toBeNull();
@@ -110,7 +166,7 @@ describe('Authentication - SSO', () => {
 			// First authentication - creates principal
 			const firstAuth = await auth.authenticate({
 				code: 'valid-code',
-				state: await auth.generateState(),
+				...(await auth.generateState()),
 			});
 
 			expect(firstAuth).not.toBeNull();
@@ -119,7 +175,7 @@ describe('Authentication - SSO', () => {
 			// Second authentication with same code
 			const secondAuth = await auth.authenticate({
 				code: 'valid-code',
-				state: await auth.generateState(),
+				...(await auth.generateState()),
 			});
 
 			expect(secondAuth).not.toBeNull();
@@ -132,7 +188,7 @@ describe('Authentication - SSO', () => {
 			try {
 				await auth.authenticate({
 					code: 'invalid-code',
-					state: await auth.generateState(),
+					...(await auth.generateState()),
 				});
 			}
 			catch (err) {
@@ -147,7 +203,7 @@ describe('Authentication - SSO', () => {
 		it('should save SSO tokens after successful authentication', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
-				state: await auth.generateState(),
+				...(await auth.generateState()),
 			});
 
 			if (!principal) {
@@ -167,7 +223,7 @@ describe('Authentication - SSO', () => {
 		it('should update existing SSO token on re-authentication', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
-				state: await auth.generateState(),
+				...(await auth.generateState()),
 			});
 
 			if (!principal) {
@@ -180,7 +236,7 @@ describe('Authentication - SSO', () => {
 			// Re-authenticate
 			await auth.authenticate({
 				code: 'valid-code',
-				state: await auth.generateState(),
+				...(await auth.generateState()),
 			});
 
 			const secondToken = await auth.getStoredToken(principal.id);
@@ -194,7 +250,7 @@ describe('Authentication - SSO', () => {
 		it('should refresh access token using refresh token', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
-				state: await auth.generateState(),
+				...(await auth.generateState()),
 			});
 
 			if (!principal) {
@@ -210,7 +266,7 @@ describe('Authentication - SSO', () => {
 		it('should update stored token with new values after refresh', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
-				state: await auth.generateState(),
+				...(await auth.generateState()),
 			});
 
 			if (!principal) {
@@ -228,7 +284,7 @@ describe('Authentication - SSO', () => {
 		it('should return null if refresh token does not exist', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
-				state: await auth.generateState(),
+				...(await auth.generateState()),
 			});
 
 			if (!principal) {
@@ -252,7 +308,7 @@ describe('Authentication - SSO', () => {
 		it('should retrieve stored SSO token by principal ID', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
-				state: await auth.generateState(),
+				...(await auth.generateState()),
 			});
 
 			if (!principal) {
@@ -283,7 +339,7 @@ describe('Authentication - SSO', () => {
 		it('should delete SSO tokens for a principal', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
-				state: await auth.generateState(),
+				...(await auth.generateState()),
 			});
 
 			if (!principal) {
@@ -306,7 +362,7 @@ describe('Authentication - SSO', () => {
 		it('should allow re-authentication after session revocation', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
-				state: await auth.generateState(),
+				...(await auth.generateState()),
 			});
 
 			if (!principal) {
@@ -319,7 +375,7 @@ describe('Authentication - SSO', () => {
 			// Re-authenticate
 			const reAuthPrincipal = await auth.authenticate({
 				code: 'valid-code',
-				state: await auth.generateState(),
+				...(await auth.generateState()),
 			});
 
 			expect(reAuthPrincipal).not.toBeNull();
@@ -357,7 +413,7 @@ describe('Authentication - SSO', () => {
 		it('should set token expiration based on expires_in value', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
-				state: await auth.generateState(),
+				...(await auth.generateState()),
 			});
 
 			if (!principal) {
@@ -380,7 +436,7 @@ describe('Authentication - SSO', () => {
 		it('should update expiration time on token refresh', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
-				state: await auth.generateState(),
+				...(await auth.generateState()),
 			});
 
 			if (!principal) {
@@ -406,7 +462,7 @@ describe('Authentication - SSO', () => {
 		it('should store provider-specific user information in metadata', async () => {
 			const principal = await auth.authenticate({
 				code: 'valid-code',
-				state: await auth.generateState(),
+				...(await auth.generateState()),
 			});
 
 			if (!principal) {
@@ -494,11 +550,11 @@ describe('Authentication - SSO', () => {
 
 				const principal1 = await multiAuth.authenticate({
 					code: 'valid-code-1',
-					state: await multiAuth.generateState(),
+					...(await multiAuth.generateState()),
 				});
 				const principal2 = await multiAuth.authenticate({
 					code: 'valid-code-2',
-					state: await multiAuth.generateState(),
+					...(await multiAuth.generateState()),
 				});
 
 				expect(principal1).not.toBeNull();
@@ -518,21 +574,57 @@ describe('Authentication - SSO', () => {
 	});
 
 	describe('CSRF protection - state validation', () => {
+		it('allows only one concurrent state consumer', async () => {
+			const { state, stateBinding } = await auth.generateState();
+			const results = await Promise.allSettled([
+				auth.validateState(state, stateBinding),
+				auth.validateState(state, stateBinding),
+			]);
+			expect(results.filter((result) =>
+				result.status === 'fulfilled'
+			).length).toBe(1);
+			expect(results.filter((result) =>
+				result.status === 'rejected'
+			).length).toBe(1);
+		});
+
+		it('rejects expired state before contacting the provider', async () => {
+			const { state, stateBinding } = await auth.generateState();
+			await auth['ssoStateRepo'].update({
+				set: { expires_at: new Date(Date.now() - 1000) },
+				where: { state },
+			});
+			const exchange = spyOn(auth, 'exchangeAuthorizationCode');
+			expect(await auth.authenticate({
+				code: 'valid-code', state, stateBinding,
+			})).toBeNull();
+			expect(exchange).not.toHaveBeenCalled();
+		});
+
+		it('rejects replayed state before provider requests', async () => {
+			const { state, stateBinding } = await auth.generateState();
+			await auth.validateState(state, stateBinding);
+			const exchange = spyOn(auth, 'exchangeAuthorizationCode');
+			expect(await auth.authenticate({
+				code: 'valid-code', state, stateBinding,
+			})).toBeNull();
+			expect(exchange).not.toHaveBeenCalled();
+		});
 		// eslint-disable-next-line max-len
 		it('should generate unique state for each authorization request', async () => {
-			const state1 = await auth.generateState();
-			const state2 = await auth.generateState();
+			const result1 = await auth.generateState();
+			const result2 = await auth.generateState();
 
-			expect(state1).toBeDefined();
-			expect(state2).toBeDefined();
-			expect(state1.length).toBeGreaterThan(16);
-			expect(state2.length).toBeGreaterThan(16);
-			expect(state1).not.toEqual(state2);
+			expect(result1.state).toBeDefined();
+			expect(result2.state).toBeDefined();
+			expect(result1.state.length).toBeGreaterThan(16);
+			expect(result2.state.length).toBeGreaterThan(16);
+			expect(result1.state).not.toEqual(result2.state);
 		});
 
 		// eslint-disable-next-line max-len
 		it('should store state with correct expiration time', async () => {
-			const state = await auth.generateState();
+			const { state } = await auth.generateState();
 			const storedState = await auth.getStoredState(state);
 
 			expect(storedState).not.toBeNull();
@@ -550,18 +642,42 @@ describe('Authentication - SSO', () => {
 		});
 
 		it('should validate matching state parameter', async () => {
-			const state = await auth.generateState();
+			const { state, stateBinding } = await auth.generateState();
 
-			const isValid = await auth.validateState(state);
+			const isValid = await auth.validateState(state, stateBinding);
 
 			expect(isValid).toBe(true);
+		});
+
+		it('rejects state from a different browser binding', async () => {
+			const { state, stateBinding } = await auth.generateState();
+			const exchange = spyOn(
+				auth, 'exchangeAuthorizationCode'
+			).and.callThrough();
+
+			expect(await auth.authenticate({
+				code: 'valid-code',
+				state,
+				stateBinding: 'attacker-binding',
+			})).toBeNull();
+			expect(exchange).not.toHaveBeenCalled();
+			expect((await auth.getStoredState(state))?.used_at).toBeNull();
+
+			expect(await auth.authenticate({
+				code: 'valid-code',
+				state,
+				stateBinding,
+			})).not.toBeNull();
+			expect(exchange).toHaveBeenCalledTimes(1);
 		});
 
 		it('should reject mismatched state', async () => {
 			let error: Error | undefined;
 
 			try {
-				await auth.validateState('invalid-state-value');
+				await auth.validateState(
+					'invalid-state-value', 'secret-binding'
+				);
 			}
 			catch (err) {
 				error = err as Error;
@@ -573,16 +689,16 @@ describe('Authentication - SSO', () => {
 
 		// eslint-disable-next-line max-len
 		it('should reject reused/consumed state parameters', async () => {
-			const state = await auth.generateState();
+			const { state, stateBinding } = await auth.generateState();
 
 			// First use - should succeed
-			await auth.validateState(state);
+			await auth.validateState(state, stateBinding);
 
 			// Second use - should fail (state consumed)
 			let error: Error | undefined;
 
 			try {
-				await auth.validateState(state);
+				await auth.validateState(state, stateBinding);
 			}
 			catch (err) {
 				error = err as Error;
@@ -593,7 +709,7 @@ describe('Authentication - SSO', () => {
 		});
 
 		it('should allow only one concurrent state claim', async () => {
-			const state = await auth.generateState();
+			const { state, stateBinding } = await auth.generateState();
 			const repository = auth['ssoStateRepo'];
 			const findOne = repository.findOne.bind(repository);
 			let initialReads = 0;
@@ -617,8 +733,8 @@ describe('Authentication - SSO', () => {
 			});
 
 			const results = await Promise.allSettled([
-				auth.validateState(state),
-				auth.validateState(state),
+				auth.validateState(state, stateBinding),
+				auth.validateState(state, stateBinding),
 			]);
 
 			expect(initialReads).toBe(2);
@@ -640,7 +756,7 @@ describe('Authentication - SSO', () => {
 		it(
 			'should not claim state that expires between read and update',
 			async () => {
-				const state = await auth.generateState();
+				const { state, stateBinding } = await auth.generateState();
 				const repository = auth['ssoStateRepo'];
 				const update = repository.update.bind(repository);
 
@@ -656,7 +772,7 @@ describe('Authentication - SSO', () => {
 
 				let error: Error | undefined;
 				try {
-					await auth.validateState(state);
+					await auth.validateState(state, stateBinding);
 				}
 				catch (caught) {
 					error = caught as Error;
@@ -671,10 +787,11 @@ describe('Authentication - SSO', () => {
 
 		// eslint-disable-next-line max-len
 		it('should authenticate with valid state parameter', async () => {
-			const state = await auth.generateState();
+			const { state, stateBinding } = await auth.generateState();
 			const principal = await auth.authenticate({
 				code: 'valid-code',
 				state,
+				stateBinding,
 			});
 
 			expect(principal).not.toBeNull();
@@ -683,20 +800,11 @@ describe('Authentication - SSO', () => {
 
 		// eslint-disable-next-line max-len
 		it('should reject authentication with mismatched state', async () => {
-			let error: Error | undefined;
-
-			try {
-				await auth.authenticate({
-					code: 'valid-code',
-					state: 'wrong-state',
-				});
-			}
-			catch (err) {
-				error = err as Error;
-			}
-
-			expect(error).toBeDefined();
-			expect(error?.message).toContain('State validation failed');
+			expect(await auth.authenticate({
+				code: 'valid-code',
+				state: 'wrong-state',
+				stateBinding: 'wrong-binding',
+			})).toBeNull();
 		});
 
 		it(
@@ -708,10 +816,10 @@ describe('Authentication - SSO', () => {
 				const credentials = { code: 'valid-code' } as {
 					code: string;
 					state: string;
+					stateBinding: string;
 				};
 
-				await expectAsync(auth.authenticate(credentials))
-					.toBeRejectedWithError('Missing state parameter');
+				expect(await auth.authenticate(credentials)).toBeNull();
 				expect(exchange).not.toHaveBeenCalled();
 			}
 		);
@@ -721,20 +829,26 @@ describe('Authentication - SSO', () => {
 				auth, 'exchangeAuthorizationCode'
 			).and.callThrough();
 
-			await expectAsync(auth.authenticate({
+			expect(await auth.authenticate({
 				code: 'valid-code',
 				state: '',
-			})).toBeRejectedWithError('Missing state parameter');
+				stateBinding: 'secret-binding',
+			})).toBeNull();
 			expect(exchange).not.toHaveBeenCalled();
 		});
 
 		// eslint-disable-next-line max-len
 		it('should generate authorization URL with embedded state', async () => {
 			const result = await auth.generateAuthorizationUrl();
+			const reusedBinding = await auth.generateAuthorizationUrl(
+				result.stateBinding
+			);
 
 			expect(result.url).toBeDefined();
 			expect(result.state).toBeDefined();
+			expect(result.stateBinding).toBeDefined();
 			expect(result.url).toContain(result.state);
+			expect(reusedBinding.stateBinding).toEqual(result.stateBinding);
 			expect(result.url).toContain(
 				'https://provider.example.com/authorize'
 			);
@@ -751,7 +865,7 @@ describe('Authentication - SSO', () => {
 
 		// eslint-disable-next-line max-len
 		it('should cleanup expired state records', async () => {
-			const state = await auth.generateState();
+			const { state } = await auth.generateState();
 			const storedStateBefore = await auth.getStoredState(state);
 
 			expect(storedStateBefore).not.toBeNull();
@@ -784,7 +898,7 @@ describe('Authentication - SSO', () => {
 		it('should encrypt tokens before storing in database', async () => {
 			const principal = await encryptedAuth.authenticate({
 				code: 'valid-code',
-				state: await encryptedAuth.generateState(),
+				...(await encryptedAuth.generateState()),
 			});
 
 			if (!principal) {
@@ -817,7 +931,7 @@ describe('Authentication - SSO', () => {
 		it('should decrypt tokens when retrieving from database', async () => {
 			const principal = await encryptedAuth.authenticate({
 				code: 'valid-code',
-				state: await encryptedAuth.generateState(),
+				...(await encryptedAuth.generateState()),
 			});
 
 			if (!principal) {
@@ -836,7 +950,7 @@ describe('Authentication - SSO', () => {
 		it('should encrypt new tokens on refresh with encryption', async () => {
 			const principal = await encryptedAuth.authenticate({
 				code: 'valid-code',
-				state: await encryptedAuth.generateState(),
+				...(await encryptedAuth.generateState()),
 			});
 
 			if (!principal) {
@@ -865,7 +979,7 @@ describe('Authentication - SSO', () => {
 		it('should decrypt refresh token before using it', async () => {
 			const principal = await encryptedAuth.authenticate({
 				code: 'valid-code',
-				state: await encryptedAuth.generateState(),
+				...(await encryptedAuth.generateState()),
 			});
 
 			if (!principal) {
@@ -887,7 +1001,7 @@ describe('Authentication - SSO', () => {
 		it('should decrypt refresh token to access new token', async () => {
 			const principal = await encryptedAuth.authenticate({
 				code: 'valid-code',
-				state: await encryptedAuth.generateState(),
+				...(await encryptedAuth.generateState()),
 			});
 
 			if (!principal) {
@@ -908,7 +1022,7 @@ describe('Authentication - SSO', () => {
 		it('should handle different data for access and refresh tokens', async () => {
 			const principal = await encryptedAuth.authenticate({
 				code: 'valid-code',
-				state: await encryptedAuth.generateState(),
+				...(await encryptedAuth.generateState()),
 			});
 
 			if (!principal) {
@@ -934,7 +1048,7 @@ describe('Authentication - SSO', () => {
 		it('should support revokeSession with encryption enabled', async () => {
 			const principal = await encryptedAuth.authenticate({
 				code: 'valid-code',
-				state: await encryptedAuth.generateState(),
+				...(await encryptedAuth.generateState()),
 			});
 
 			if (!principal) {
@@ -968,7 +1082,7 @@ describe('Authentication - SSO', () => {
 
 			const principal = await partialAuth.authenticate({
 				code: 'valid-code',
-				state: await partialAuth.generateState(),
+				...(await partialAuth.generateState()),
 			});
 
 			if (!principal) {
@@ -1006,7 +1120,7 @@ describe('Authentication - SSO', () => {
 
 			const principal = await encAuth.authenticate({
 				code: 'valid-code',
-				state: await encAuth.generateState(),
+				...(await encAuth.generateState()),
 			});
 
 			if (!principal) {

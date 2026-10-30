@@ -1,13 +1,18 @@
-import { DatabaseRecordId, Database } from '@riao/dbal';
-import { AuthOptions } from '@riao/iam/auth/auth';
+import { DatabaseRecordId } from '@riao/dbal';
+import { AuthenticationOptions } from '@riao/iam/authentication';
 import * as crypto from 'crypto';
 
 /**
  * SSO authentication configuration options
  */
-export interface SSOAuthenticationOptions extends AuthOptions {
-	db: Database;
+export interface SSOAuthenticationOptions extends AuthenticationOptions {
 	provider: string;
+	/**
+	 * Resolve a trusted caller/session subject.
+	 * Required when custom protection is configured.
+	 * Do not derive it from callback credentials.
+	 */
+	getProtectionSubject?: () => string;
 	// eslint-disable-next-line max-len
 	stateExpiryMinutes?: number; // Expiry time for state parameter (default: 10)
 	requestTimeoutMs?: number;
@@ -22,6 +27,7 @@ export interface SSOAuthenticationOptions extends AuthOptions {
 export interface SSOStateRecord {
 	state: string;
 	provider: string;
+	binding_hash?: string;
 	principal_id?: DatabaseRecordId;
 	created_at: Date;
 	expires_at: Date;

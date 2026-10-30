@@ -1,1 +1,1 @@
-# auth-template - Changelog
+# @riao/authn-sso - Changelog

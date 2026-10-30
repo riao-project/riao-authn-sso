@@ -22,9 +22,9 @@
 		"publish": "npm run script -- publish"
 	},
 	"dependencies": {
-		"@riao/crypto": "^1.1.2",
+		"@riao/crypto": "^1.2.1",
 		"@riao/dbal": "^3.8.0",
-		"@riao/iam": "^4.0.0"
+		"@riao/iam": "^5.0.2"
 	},
 	"devDependencies": {
 		"@istanbuljs/nyc-config-typescript": "^1.0.2",

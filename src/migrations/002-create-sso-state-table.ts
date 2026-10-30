@@ -47,6 +47,16 @@ export class CreateSSOStateTable extends Migration {
 					name: 'used_at',
 					type: ColumnType.TIMESTAMP,
 				},
+				{
+					name: 'consumption_id',
+					type: ColumnType.VARCHAR,
+					length: 64,
+				},
+				{
+					name: 'binding_hash',
+					type: ColumnType.VARCHAR,
+					length: 64,
+				},
 				CreateTimestampColumn,
 			],
 		});

@@ -1,10 +1,51 @@
 import {
 	ProviderAuthenticationRejectedError,
 	requestProviderJson,
-	throwProviderResponseError,
 	validateProviderUser,
 	validateTokenResponse,
+	throwProviderResponseError,
 } from '../../src/provider-response';
+
+describe('SSO provider rejection classification', () => {
+	it('classifies credential rejections without details', async () => {
+		const response = new Response(JSON.stringify({
+			error: 'invalid_grant',
+			error_description: 'secret-token',
+		}), { status: 400 });
+
+		await expectAsync(throwProviderResponseError(
+			'Token exchange', response
+		)).toBeRejectedWithError(ProviderAuthenticationRejectedError);
+	});
+
+	it('keeps outages/throttling operational without details', async () => {
+		for (const status of [429, 503]) {
+			const response = new Response(JSON.stringify({
+				error: 'invalid_grant',
+				error_description: 'secret-token',
+			}), { status });
+
+			try {
+				await throwProviderResponseError('Token exchange', response);
+				fail('Expected operational provider error');
+			}
+			catch (error) {
+				expect(error).not.toEqual(
+					jasmine.any(ProviderAuthenticationRejectedError)
+				);
+				expect((error as Error).message).not.toContain('secret-token');
+			}
+		}
+	});
+
+	it('classifies user-info 401 as credential rejection', async () => {
+		const response = new Response('secret-token', { status: 401 });
+
+		await expectAsync(throwProviderResponseError(
+			'User info', response, true
+		)).toBeRejectedWithError(ProviderAuthenticationRejectedError);
+	});
+});
 
 describe('SSO provider response helpers', () => {
 	it('preserves an already-aborted caller signal', async () => {

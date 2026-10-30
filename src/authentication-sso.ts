@@ -6,7 +6,16 @@ import {
 	QueryRepository,
 	DatabaseRecordId,
 } from '@riao/dbal';
-import { randomBytes } from 'crypto';
+import {
+	createHash,
+	randomBytes,
+	timingSafeEqual,
+} from 'crypto';
+import {
+	AuthenticationRejectedError,
+	AuthenticationBlockedError,
+} from '@riao/iam/authentication';
+import { ProviderAuthenticationRejectedError } from './provider-response';
 import {
 	SSOTokenRecord,
 	SSOUserInfo,
@@ -23,6 +32,7 @@ export abstract class SSOAuthentication<
 	TPrincipal extends Principal,
 > extends Authentication<TPrincipal> {
 	protected readonly provider: string;
+	protected readonly getProtectionSubject?: () => string;
 	protected readonly stateExpiryMinutes: number;
 	protected readonly requestTimeoutMs: number;
 	protected ssoTokenRepo: QueryRepository<SSOTokenRecord>;
@@ -33,7 +43,19 @@ export abstract class SSOAuthentication<
 	constructor(options: SSOAuthenticationOptions) {
 		super(options);
 		this.provider = options.provider;
-		this.stateExpiryMinutes = options.stateExpiryMinutes || 10;
+		this.getProtectionSubject = options.getProtectionSubject;
+		if (options.authenticationProtection && !this.getProtectionSubject) {
+			throw new Error(
+				'SSO authentication protection requires a subject resolver'
+			);
+		}
+		this.stateExpiryMinutes = options.stateExpiryMinutes ?? 10;
+
+		if (!Number.isFinite(this.stateExpiryMinutes) ||
+			this.stateExpiryMinutes <= 0) {
+			throw new Error('SSO state expiry must be positive');
+		}
+
 		this.requestTimeoutMs = options.requestTimeoutMs ?? 10000;
 		if (
 			!Number.isFinite(this.requestTimeoutMs) ||
@@ -41,18 +63,22 @@ export abstract class SSOAuthentication<
 		) {
 			throw new Error('SSO provider request timeout must be positive');
 		}
+
 		this.ssoTokenRepo = options.db.getQueryRepository<SSOTokenRecord>({
 			table: 'iam_sso_tokens',
 			identifiedBy: 'id',
 		});
+
 		this.ssoStateRepo = options.db.getQueryRepository<SSOStateRecord>({
 			table: 'iam_sso_state',
 			identifiedBy: 'state',
 		});
+
 		// Initialize encryption/decryption if keys provided
 		if (options.encryptionPublicKey) {
 			this.encryptor = new Encryptor(options.encryptionPublicKey);
 		}
+
 		if (options.encryptionPrivateKey) {
 			this.decryptor = new Decryptor(options.encryptionPrivateKey);
 		}
@@ -95,54 +121,110 @@ export abstract class SSOAuthentication<
 	/**
 	 * Generic authenticate implementation
 	 * Orchestrates: code exchange → user info → principal → tokens
-	 * Requires and validates state before exchanging the authorization code
+	 * Requires and consumes state before contacting provider.
+	 * Expected rejection returns null; operational errors propagate.
 	 */
 	public override async authenticate(credentials: {
 		code: string;
 		state: string;
+		stateBinding: string;
 	}): Promise<TPrincipal | null> {
-		if (typeof credentials?.state !== 'string' || !credentials.state) {
-			throw new Error('Missing state parameter');
+		const subject = this.getProtectionSubject
+			? this.getProtectionSubject()
+			: this.provider;
+		if (typeof subject !== 'string' || !subject) {
+			throw new Error(
+				'SSO authentication protection subject must be ' +
+				'a non-empty string'
+			);
 		}
-		await this.validateState(credentials.state);
+		const attempt = {
+			scheme: `sso:${this.provider}`, subject,
+		};
 
-		// Exchange code for tokens
-		const tokenData = await this.exchangeAuthorizationCode(
-			credentials.code
-		);
+		const protection = await this.beforeAuthenticationAttempt(attempt);
+		if (!protection.allowed) {
+			return null;
+		}
 
-		// Get user info from provider
-		const userInfo = await this.getUserInfo(tokenData.access_token);
+		let principal: TPrincipal;
+		try {
+			if (typeof credentials?.code !== 'string' || !credentials.code) {
+				throw new AuthenticationRejectedError('Missing code');
+			}
+			else if (
+				typeof credentials.state !== 'string' ||
+				!credentials.state
+			) {
+				throw new AuthenticationRejectedError(
+					'Missing state parameter'
+				);
+			}
 
-		// Find existing principal or create new one
-		let principal = await this.findActivePrincipal({
-			where: <TPrincipal>{
-				login: userInfo.login,
-			},
-		});
-
-		if (!principal) {
-			// Create new principal if it doesn't exist
-			const principalData = {
-				login: userInfo.login,
-				name: userInfo.name,
-				type: userInfo.type,
-			};
-			const newPrincipalId = await this.createPrincipal(
-				principalData as unknown as TPrincipal
+			await this.validateState(
+				credentials.state,
+				credentials.stateBinding
 			);
 
-			principal = await this.findActivePrincipal({
-				where: <TPrincipal>{ id: newPrincipalId },
+			const tokenData = await this.exchangeAuthorizationCode(
+				credentials.code
+			);
+			const userInfo = await this.getUserInfo(tokenData.access_token);
+			let active = await this.findActivePrincipal({
+				where: <TPrincipal>{ login: userInfo.login },
 			});
 
-			if (!principal) {
+			if (!active) {
+				const existing = await this.principalRepo.findOne({
+					where: <TPrincipal>{ login: userInfo.login },
+				});
+				if (existing) {
+					throw new AuthenticationRejectedError(
+						'Inactive principal'
+					);
+				}
+
+				const newPrincipalId = await this.createPrincipal({
+					login: userInfo.login,
+					name: userInfo.name,
+					type: userInfo.type,
+				} as unknown as TPrincipal);
+
+				active = await this.findActivePrincipal({
+					where: <TPrincipal>{ id: newPrincipalId },
+				});
+			}
+
+			if (!active) {
+				throw new Error(
+					'Unable to resolve newly created SSO principal'
+				);
+			}
+
+			principal = active;
+
+			await this.saveTokens(
+				principal.id, userInfo.id, tokenData, userInfo
+			);
+		}
+		catch (error) {
+			if (error instanceof AuthenticationBlockedError) {
 				return null;
 			}
+
+			if (
+				!(error instanceof AuthenticationRejectedError) &&
+				!(error instanceof ProviderAuthenticationRejectedError)
+			) {
+				throw error;
+			}
+
+			await this.recordAuthenticationFailure(attempt);
+
+			return null;
 		}
 
-		// Store or update SSO tokens
-		await this.saveTokens(principal.id, userInfo.id, tokenData, userInfo);
+		await this.recordAuthenticationSuccess(attempt);
 
 		return principal;
 	}
@@ -309,9 +391,16 @@ export abstract class SSOAuthentication<
 	}
 
 	/**
-	 * Generate a cryptographically random state parameter for CSRF protection
+	 * Generate state and a browser binding for CSRF protection.
 	 */
-	public async generateState(): Promise<string> {
+	public async generateState(stateBinding?: string): Promise<{
+		state: string;
+		stateBinding: string;
+	}> {
+		const binding = stateBinding ?? randomBytes(32).toString('hex');
+		if (typeof binding !== 'string' || !binding) {
+			throw new Error('SSO state binding must be a non-empty string');
+		}
 		const state = randomBytes(32).toString('hex');
 		const now = new Date();
 		// eslint-disable-next-line max-len
@@ -324,19 +413,31 @@ export abstract class SSOAuthentication<
 				{
 					state,
 					provider: this.provider,
+					binding_hash: createHash('sha256')
+						.update(binding)
+						.digest('hex'),
 					created_at: now,
 					expires_at: expiresAt,
 				} as SSOStateRecord,
 			],
 		});
 
-		return state;
+		return { state, stateBinding: binding };
 	}
 
 	/**
-	 * Validate and consume state parameter for CSRF protection
+	 * Validate the callback state and its initiating browser binding.
 	 */
-	public async validateState(state: string): Promise<boolean> {
+	public async validateState(
+		state: string,
+		stateBinding: string
+	): Promise<boolean> {
+		if (typeof stateBinding !== 'string' || !stateBinding) {
+			throw new AuthenticationRejectedError(
+				'Missing state browser binding'
+			);
+		}
+
 		const record = await this.ssoStateRepo.findOne({
 			where: {
 				state,
@@ -345,16 +446,32 @@ export abstract class SSOAuthentication<
 		});
 
 		if (!record) {
-			throw new Error('State validation failed or state not found');
+			throw new AuthenticationRejectedError('State validation failed');
+		}
+
+		const bindingHash = createHash('sha256')
+			.update(stateBinding)
+			.digest('hex');
+		if (
+			typeof record.binding_hash !== 'string' ||
+			record.binding_hash.length !== bindingHash.length ||
+			!timingSafeEqual(
+				Buffer.from(record.binding_hash),
+				Buffer.from(bindingHash)
+			)
+		) {
+			throw new AuthenticationRejectedError(
+				'State browser binding validation failed'
+			);
 		}
 
 		const now = new Date();
-		if (record.expires_at < now) {
-			throw new Error('State has expired');
+		if (record.expires_at <= now) {
+			throw new AuthenticationRejectedError('State has expired');
 		}
 
 		if (record.used_at) {
-			throw new Error('State has been consumed');
+			throw new AuthenticationRejectedError('State has been consumed');
 		}
 
 		const consumptionId = randomBytes(32).toString('hex');
@@ -369,7 +486,9 @@ export abstract class SSOAuthentication<
 		});
 		const consumed = await this.getStoredState(state);
 		if (consumed?.consumption_id !== consumptionId) {
-			throw new Error('State has been consumed or expired');
+			throw new AuthenticationRejectedError(
+				'State has been consumed or expired'
+			);
 		}
 
 		return true;
@@ -422,12 +541,16 @@ export abstract class SSOAuthentication<
 	/**
 	 * Generate authorization URL with state parameter
 	 */
-	public async generateAuthorizationUrl(): Promise<{
+	public async generateAuthorizationUrl(stateBinding?: string): Promise<{
 		url: string;
 		state: string;
+		stateBinding: string;
 	}> {
-		const state = await this.generateState();
+		const {
+			state,
+			stateBinding: generatedBinding,
+		} = await this.generateState(stateBinding);
 		const url = this.getAuthorizationUrl(state);
-		return { url, state };
+		return { url, state, stateBinding: generatedBinding };
 	}
 }
