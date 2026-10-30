@@ -6,7 +6,11 @@ import {
 	QueryRepository,
 	DatabaseRecordId,
 } from '@riao/dbal';
-import { randomBytes } from 'crypto';
+import {
+	createHash,
+	randomBytes,
+	timingSafeEqual,
+} from 'crypto';
 import {
 	AuthenticationRejectedError,
 	AuthenticationBlockedError,
@@ -123,6 +127,7 @@ export abstract class SSOAuthentication<
 	public override async authenticate(credentials: {
 		code: string;
 		state: string;
+		stateBinding: string;
 	}): Promise<TPrincipal | null> {
 		const subject = this.getProtectionSubject
 			? this.getProtectionSubject()
@@ -156,7 +161,10 @@ export abstract class SSOAuthentication<
 				);
 			}
 
-			await this.validateState(credentials.state);
+			await this.validateState(
+				credentials.state,
+				credentials.stateBinding
+			);
 
 			const tokenData = await this.exchangeAuthorizationCode(
 				credentials.code
@@ -383,9 +391,16 @@ export abstract class SSOAuthentication<
 	}
 
 	/**
-	 * Generate a cryptographically random state parameter for CSRF protection
+	 * Generate state and a browser binding for CSRF protection.
 	 */
-	public async generateState(): Promise<string> {
+	public async generateState(stateBinding?: string): Promise<{
+		state: string;
+		stateBinding: string;
+	}> {
+		const binding = stateBinding ?? randomBytes(32).toString('hex');
+		if (typeof binding !== 'string' || !binding) {
+			throw new Error('SSO state binding must be a non-empty string');
+		}
 		const state = randomBytes(32).toString('hex');
 		const now = new Date();
 		// eslint-disable-next-line max-len
@@ -398,19 +413,31 @@ export abstract class SSOAuthentication<
 				{
 					state,
 					provider: this.provider,
+					binding_hash: createHash('sha256')
+						.update(binding)
+						.digest('hex'),
 					created_at: now,
 					expires_at: expiresAt,
 				} as SSOStateRecord,
 			],
 		});
 
-		return state;
+		return { state, stateBinding: binding };
 	}
 
 	/**
-	 * Validate and consume state parameter for CSRF protection
+	 * Validate the callback state and its initiating browser binding.
 	 */
-	public async validateState(state: string): Promise<boolean> {
+	public async validateState(
+		state: string,
+		stateBinding: string
+	): Promise<boolean> {
+		if (typeof stateBinding !== 'string' || !stateBinding) {
+			throw new AuthenticationRejectedError(
+				'Missing state browser binding'
+			);
+		}
+
 		const record = await this.ssoStateRepo.findOne({
 			where: {
 				state,
@@ -420,6 +447,22 @@ export abstract class SSOAuthentication<
 
 		if (!record) {
 			throw new AuthenticationRejectedError('State validation failed');
+		}
+
+		const bindingHash = createHash('sha256')
+			.update(stateBinding)
+			.digest('hex');
+		if (
+			typeof record.binding_hash !== 'string' ||
+			record.binding_hash.length !== bindingHash.length ||
+			!timingSafeEqual(
+				Buffer.from(record.binding_hash),
+				Buffer.from(bindingHash)
+			)
+		) {
+			throw new AuthenticationRejectedError(
+				'State browser binding validation failed'
+			);
 		}
 
 		const now = new Date();
@@ -498,12 +541,16 @@ export abstract class SSOAuthentication<
 	/**
 	 * Generate authorization URL with state parameter
 	 */
-	public async generateAuthorizationUrl(): Promise<{
+	public async generateAuthorizationUrl(stateBinding?: string): Promise<{
 		url: string;
 		state: string;
+		stateBinding: string;
 	}> {
-		const state = await this.generateState();
+		const {
+			state,
+			stateBinding: generatedBinding,
+		} = await this.generateState(stateBinding);
 		const url = this.getAuthorizationUrl(state);
-		return { url, state };
+		return { url, state, stateBinding: generatedBinding };
 	}
 }

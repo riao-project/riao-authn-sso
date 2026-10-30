@@ -45,7 +45,11 @@ describe('SSO authentication contract (isolated)', () => {
 		id: 'principal-id', login: 'person@example.com', type: 'user',
 		name: 'Person', create_timestamp: new Date(),
 	};
-	const credentials = { code: 'secret-code', state: 'secret-state' };
+	const credentials = {
+		code: 'secret-code',
+		state: 'secret-state',
+		stateBinding: 'secret-binding',
+	};
 
 	beforeEach(() => {
 		repo = jasmine.createSpyObj('repository', ['findOne', 'update']);
@@ -211,6 +215,7 @@ describe('SSO authentication contract (isolated)', () => {
 		expect(await auth.authenticate({
 			code: 'secret-code',
 			state: '',
+			stateBinding: 'secret-binding',
 		})).toBeNull();
 		expect(auth.exchangeAuthorizationCode).not.toHaveBeenCalled();
 		expect(protection.onFailure).toHaveBeenCalledTimes(1);

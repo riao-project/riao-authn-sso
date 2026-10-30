@@ -27,6 +27,7 @@ export interface SSOAuthenticationOptions extends AuthenticationOptions {
 export interface SSOStateRecord {
 	state: string;
 	provider: string;
+	binding_hash?: string;
 	principal_id?: DatabaseRecordId;
 	created_at: Date;
 	expires_at: Date;

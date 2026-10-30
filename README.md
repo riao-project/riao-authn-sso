@@ -14,7 +14,7 @@ Provider-facing error messages omit response bodies and transport details. Their
 
 ## SSO Callback State
 
-Always generate state before redirecting to the identity provider and pass the callback's non-empty `state` value to `authenticate`. Missing, invalid, expired, or reused state is rejected before authorization-code exchange.
+Always generate state before redirecting to the identity provider. Store the returned `stateBinding` in a secure, HttpOnly cookie (SameSite=Lax for a query/GET callback; use SameSite=None; Secure for a cross-site POST callback) or another unguessable browser-session secret that survives the provider redirect. Pass that cookie value to `generateAuthorizationUrl` when reusing an existing browser binding, and pass the same value with the callback's `state` to `authenticate`. Do not use the callback's state, a user identifier, or another attacker-observable value as the binding. Missing, invalid, expired, reused, or browser-mismatched state is rejected before authorization-code exchange.
 
 ## Contributing & Development
 
