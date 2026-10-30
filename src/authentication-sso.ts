@@ -28,6 +28,7 @@ export abstract class SSOAuthentication<
 	TPrincipal extends Principal,
 > extends Authentication<TPrincipal> {
 	protected readonly provider: string;
+	protected readonly getProtectionSubject?: () => string;
 	protected readonly stateExpiryMinutes: number;
 	protected readonly requestTimeoutMs: number;
 	protected ssoTokenRepo: QueryRepository<SSOTokenRecord>;
@@ -38,6 +39,12 @@ export abstract class SSOAuthentication<
 	constructor(options: SSOAuthenticationOptions) {
 		super(options);
 		this.provider = options.provider;
+		this.getProtectionSubject = options.getProtectionSubject;
+		if (options.authenticationProtection && !this.getProtectionSubject) {
+			throw new Error(
+				'SSO authentication protection requires a subject resolver'
+			);
+		}
 		this.stateExpiryMinutes = options.stateExpiryMinutes ?? 10;
 
 		if (!Number.isFinite(this.stateExpiryMinutes) ||
@@ -117,8 +124,17 @@ export abstract class SSOAuthentication<
 		code: string;
 		state: string;
 	}): Promise<TPrincipal | null> {
+		const subject = this.getProtectionSubject
+			? this.getProtectionSubject()
+			: this.provider;
+		if (typeof subject !== 'string' || !subject) {
+			throw new Error(
+				'SSO authentication protection subject must be ' +
+				'a non-empty string'
+			);
+		}
 		const attempt = {
-			scheme: `sso:${this.provider}`, subject: this.provider,
+			scheme: `sso:${this.provider}`, subject,
 		};
 
 		const protection = await this.beforeAuthenticationAttempt(attempt);

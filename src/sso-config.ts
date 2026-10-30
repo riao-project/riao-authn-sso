@@ -7,6 +7,12 @@ import * as crypto from 'crypto';
  */
 export interface SSOAuthenticationOptions extends AuthenticationOptions {
 	provider: string;
+	/**
+	 * Resolve a trusted caller/session subject.
+	 * Required when custom protection is configured.
+	 * Do not derive it from callback credentials.
+	 */
+	getProtectionSubject?: () => string;
 	// eslint-disable-next-line max-len
 	stateExpiryMinutes?: number; // Expiry time for state parameter (default: 10)
 	requestTimeoutMs?: number;

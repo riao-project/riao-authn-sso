@@ -61,7 +61,10 @@ describe('SSO authentication contract (isolated)', () => {
 		protection.onFailure.and.resolveTo();
 		protection.onSuccess.and.resolveTo();
 		auth = new ContractSSO({
-			db, provider: 'test', authenticationProtection: protection,
+			db,
+			provider: 'test',
+			authenticationProtection: protection,
+			getProtectionSubject: () => 'caller-session',
 		});
 		spyOn(auth, 'validateState').and.resolveTo(true);
 		spyOn(auth, 'findActivePrincipal').and.resolveTo(
@@ -86,7 +89,7 @@ describe('SSO authentication contract (isolated)', () => {
 		expect(protection.onSuccess).toHaveBeenCalledTimes(1);
 		expect(protection.onFailure).not.toHaveBeenCalled();
 		expect(protection.onSuccess).toHaveBeenCalledWith({
-			scheme: 'sso:test', subject: 'test',
+			scheme: 'sso:test', subject: 'caller-session',
 		});
 		expect(auth.validateState).toHaveBeenCalledBefore(
 			auth.exchangeAuthorizationCode as jasmine.Spy
@@ -120,6 +123,37 @@ describe('SSO authentication contract (isolated)', () => {
 		);
 		expect(await auth.authenticate(credentials)).toBeNull();
 		expect(protection.onFailure).not.toHaveBeenCalled();
+	});
+
+	it('requires a non-empty resolved protection subject', async () => {
+		auth = new ContractSSO({
+			db: {
+				getQueryRepository: () => repo,
+			} as unknown as Database,
+			provider: 'test',
+			authenticationProtection: protection,
+			getProtectionSubject: () => '',
+		});
+		spyOn(auth, 'validateState').and.resolveTo(true);
+
+		await expectAsync(auth.authenticate(credentials))
+			.toBeRejectedWithError(
+				'SSO authentication protection subject must be ' +
+				'a non-empty string'
+			);
+		expect(protection.beforeAttempt).not.toHaveBeenCalled();
+	});
+
+	it('requires a subject resolver when protection is configured', () => {
+		expect(() => new ContractSSO({
+			db: {
+				getQueryRepository: () => repo,
+			} as unknown as Database,
+			provider: 'test',
+			authenticationProtection: protection,
+		})).toThrowError(
+			'SSO authentication protection requires a subject resolver'
+		);
 	});
 
 	it('propagates provider outages without failure callbacks', async () => {
