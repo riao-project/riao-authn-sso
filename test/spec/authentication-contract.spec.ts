@@ -166,10 +166,28 @@ describe('SSO authentication contract (isolated)', () => {
 
 	it('propagates storage errors without recording failure', async () => {
 		const outage = new Error('Database unavailable');
-		repo.findOne.and.rejectWith(outage);
+		(auth.findActivePrincipal as jasmine.Spy).and.rejectWith(outage);
 		await expectAsync(auth.authenticate(credentials))
 			.toBeRejectedWith(outage);
 		expect(protection.onFailure).not.toHaveBeenCalled();
+	});
+
+	it('prefers an active principal over an inactive duplicate', async () => {
+		const activePrincipal = { ...principal, id: 'active-principal' };
+		(auth.findActivePrincipal as jasmine.Spy).and.resolveTo(
+			activePrincipal
+		);
+		repo.findOne.and.resolveTo({
+			...principal, id: 'inactive-principal',
+		});
+
+		expect(await auth.authenticate(credentials)).toEqual(activePrincipal);
+		expect(
+			auth.findActivePrincipal as jasmine.Spy
+		).toHaveBeenCalledWith({
+			where: { login: 'person@example.com' },
+		});
+		expect(repo.findOne).not.toHaveBeenCalled();
 	});
 
 	it('rejects missing code before exchange', async () => {
@@ -228,6 +246,10 @@ describe('SSO authentication contract (isolated)', () => {
 
 	it('provisions only when the principal is absent', async () => {
 		repo.findOne.and.resolveTo(null);
+		(auth.findActivePrincipal as jasmine.Spy).and.returnValues(
+			Promise.resolve(null),
+			Promise.resolve(principal)
+		);
 		expect(await auth.authenticate(credentials)).toEqual(principal);
 		expect(auth.createPrincipal).toHaveBeenCalledTimes(1);
 		expect(protection.onSuccess).toHaveBeenCalledTimes(1);

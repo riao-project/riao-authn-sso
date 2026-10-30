@@ -162,20 +162,20 @@ export abstract class SSOAuthentication<
 				credentials.code
 			);
 			const userInfo = await this.getUserInfo(tokenData.access_token);
-			const existing = await this.principalRepo.findOne({
+			let active = await this.findActivePrincipal({
 				where: <TPrincipal>{ login: userInfo.login },
 			});
 
-			let active = existing
-				? await this.findActivePrincipal({
-					where: <TPrincipal>{ id: existing.id },
-				})
-				: null;
+			if (!active) {
+				const existing = await this.principalRepo.findOne({
+					where: <TPrincipal>{ login: userInfo.login },
+				});
+				if (existing) {
+					throw new AuthenticationRejectedError(
+						'Inactive principal'
+					);
+				}
 
-			if (existing && !active) {
-				throw new AuthenticationRejectedError('Inactive principal');
-			}
-			else if (!existing) {
 				const newPrincipalId = await this.createPrincipal({
 					login: userInfo.login,
 					name: userInfo.name,

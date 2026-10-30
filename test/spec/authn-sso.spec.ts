@@ -118,6 +118,36 @@ describe('Authentication - SSO', () => {
 			})).toBe(1);
 			expect(await inactiveAuth.getStoredToken(id)).toBeNull();
 		});
+		it('prefers an active duplicate principal', async () => {
+			class DuplicateLoginSSO extends TestSSOAuthentication {
+				protected override async getUserInfo(): Promise<SSOUserInfo> {
+					return {
+						id: 'duplicate-provider-user',
+						login: 'duplicate-sso@example.com',
+						name: 'Duplicate User', type: 'user',
+					};
+				}
+			}
+			const duplicateAuth = new DuplicateLoginSSO({
+				db, provider: 'duplicate-test',
+			});
+			const inactiveId = await duplicateAuth.createPrincipal({
+				login: 'duplicate-sso@example.com',
+				name: 'Inactive Duplicate', type: 'user',
+			});
+			await duplicateAuth.deactivatePrincipal(inactiveId);
+			const activeId = await duplicateAuth.createPrincipal({
+				login: 'duplicate-sso@example.com',
+				name: 'Active Duplicate', type: 'user',
+			});
+
+			const principal = await duplicateAuth.authenticate({
+				code: 'valid-code',
+				state: await duplicateAuth.generateState(),
+			});
+
+			expect(String(principal?.id)).toEqual(String(activeId));
+		});
 		// eslint-disable-next-line max-len
 		it('should create a new principal on first SSO authentication', async () => {
 			const principal = await auth.authenticate({
